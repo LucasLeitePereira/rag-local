@@ -1,6 +1,15 @@
 from docserver import cli
 
 
+def _embeddar_falso(chunk):
+    texto = chunk["texto"]
+    return [float(len(texto) % 7), float(len(texto) % 5), float(len(texto) % 3)]
+
+
+def _embeddar_consulta_falso(consulta):
+    return [float(len(consulta) % 7), float(len(consulta) % 5), float(len(consulta) % 3)]
+
+
 def test_ingestao_processa_md_e_indexa_chunks(tmp_path):
     docs_fonte = tmp_path / "docs-fonte"
     docs_normalizado = tmp_path / "docs-normalizado"
@@ -12,7 +21,7 @@ def test_ingestao_processa_md_e_indexa_chunks(tmp_path):
     )
     caminho_indice = str(tmp_path / "indice.db")
 
-    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     assert relatorio["processados"] == 1
     assert relatorio["chunks"] == 1
@@ -28,7 +37,7 @@ def test_ingestao_relatorio_conta_ignorados_e_falhas(tmp_path):
     (docs_fonte / "planilha.xyz").write_text("formato não suportado", encoding="utf-8")
     caminho_indice = str(tmp_path / "indice.db")
 
-    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     assert relatorio["processados"] == 1
     assert len(relatorio["ignorados"]) == 1
@@ -43,7 +52,7 @@ def test_ingestao_ignora_arquivos_ocultos_e_temporarios_do_office(tmp_path):
     (docs_fonte / "~$rascunho.docx").write_text("temporário do office", encoding="utf-8")
     caminho_indice = str(tmp_path / "indice.db")
 
-    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     assert relatorio["processados"] == 0
     assert relatorio["ignorados"] == []
@@ -59,7 +68,7 @@ def test_busca_formata_resultado_com_origem_e_secao(tmp_path):
         encoding="utf-8",
     )
     caminho_indice = str(tmp_path / "indice.db")
-    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     resultados = cli.executar_busca(caminho_indice, "instalar")
     texto = cli.formatar_resultados(resultados)
@@ -84,7 +93,7 @@ def test_avaliar_calcula_taxa_de_acerto_por_perfil_no_modo_lexico(tmp_path):
         encoding="utf-8",
     )
     caminho_indice = str(tmp_path / "indice.db")
-    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     caminho_perguntas = tmp_path / "perguntas.yaml"
     caminho_perguntas.write_text(
@@ -103,6 +112,108 @@ def test_avaliar_calcula_taxa_de_acerto_por_perfil_no_modo_lexico(tmp_path):
     assert resultado["lexico"]["natural"] == [0, 1]
 
 
+def test_ingestao_com_embeddings_grava_modelo_no_indice(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Seção\n\nConteúdo com bastante texto para não ser descartado.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+
+    cli.executar_ingestao(
+        docs_fonte,
+        docs_normalizado,
+        caminho_indice,
+        embeddar_passagem_fn=_embeddar_falso,
+        nome_modelo="fake",
+    )
+
+    stats = cli.executar_stats(caminho_indice)
+    assert stats["modelo"] == "fake"
+
+
+def test_ingestao_com_sem_embeddings_nao_grava_modelo(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Seção\n\nConteúdo com bastante texto para não ser descartado.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    stats = cli.executar_stats(caminho_indice)
+    assert stats["modelo"] is None
+
+
+def test_busca_com_modo_lexico_nao_usa_vetorial(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Seção\n\nConteúdo com bastante texto sobre faturamento mensal.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(
+        docs_fonte,
+        docs_normalizado,
+        caminho_indice,
+        embeddar_passagem_fn=_embeddar_falso,
+        nome_modelo="fake",
+    )
+
+    resultados = cli.executar_busca(caminho_indice, "faturamento", modo="lexico")
+
+    assert len(resultados) == 1
+
+
+def test_avaliar_roda_nos_tres_modos_quando_indice_vetorial_existe(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "auth.md").write_text(
+        "# Auth\n\n## Renovação\n\nO refresh token dura 30 dias e é rotacionado a cada uso.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(
+        docs_fonte,
+        docs_normalizado,
+        caminho_indice,
+        embeddar_passagem_fn=_embeddar_falso,
+        nome_modelo="fake",
+    )
+
+    caminho_perguntas = tmp_path / "perguntas.yaml"
+    caminho_perguntas.write_text(
+        "- pergunta: \"refresh token\"\n"
+        "  esperado: docs-fonte/auth.md\n"
+        "  perfil: tecnico\n",
+        encoding="utf-8",
+    )
+
+    resultado = cli.executar_avaliacao(
+        caminho_perguntas,
+        caminho_indice,
+        modos=("lexico", "vetorial", "hibrido"),
+        embeddar_consulta_fn=_embeddar_consulta_falso,
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert set(resultado.keys()) == {"lexico", "vetorial", "hibrido"}
+    assert resultado["lexico"]["tecnico"] == [1, 1]
+
+
 def test_stats_reporta_documentos_e_chunks_indexados(tmp_path):
     docs_fonte = tmp_path / "docs-fonte"
     docs_normalizado = tmp_path / "docs-normalizado"
@@ -113,7 +224,7 @@ def test_stats_reporta_documentos_e_chunks_indexados(tmp_path):
         encoding="utf-8",
     )
     caminho_indice = str(tmp_path / "indice.db")
-    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
     stats = cli.executar_stats(caminho_indice)
 

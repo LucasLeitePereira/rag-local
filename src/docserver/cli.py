@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from docserver import chunk, extract, index
+from docserver import chunk, embed, extract, index
 
 DOCS_FONTE_PADRAO = Path("docs-fonte")
 DOCS_NORMALIZADO_PADRAO = Path("docs-normalizado")
@@ -20,7 +20,14 @@ def _deve_ignorar(caminho: Path) -> bool:
     return caminho.name.startswith(".") or caminho.name.startswith("~$")
 
 
-def executar_ingestao(docs_fonte: Path, docs_normalizado: Path, caminho_indice: str) -> dict:
+def executar_ingestao(
+    docs_fonte: Path,
+    docs_normalizado: Path,
+    caminho_indice: str,
+    sem_embeddings: bool = False,
+    embeddar_passagem_fn=None,
+    nome_modelo: str | None = None,
+) -> dict:
     inicio = time.perf_counter()
     relatorio = {
         "processados": 0,
@@ -51,8 +58,13 @@ def executar_ingestao(docs_fonte: Path, docs_normalizado: Path, caminho_indice: 
 
         todos_chunks.extend(chunk.chunkar_arquivo(caminho_normalizado_arquivo))
 
+    embeddings = None
+    if not sem_embeddings and todos_chunks:
+        calcular = embeddar_passagem_fn or embed.embeddar_passagem
+        embeddings = [calcular(c) for c in todos_chunks]
+
     conexao = index.criar_indice(caminho_indice)
-    index.reindexar(conexao, todos_chunks)
+    index.reindexar(conexao, todos_chunks, embeddings=embeddings, nome_modelo=nome_modelo)
     conexao.close()
 
     relatorio["chunks"] = len(todos_chunks)
@@ -83,10 +95,16 @@ def formatar_relatorio(relatorio: dict) -> str:
     return "\n".join(linhas)
 
 
-def executar_busca(caminho_indice: str, consulta: str, limite: int = 5) -> list[dict]:
+def executar_busca(
+    caminho_indice: str, consulta: str, limite: int = 5, modo: str = "hibrido"
+) -> list[dict]:
     conexao = index.criar_indice(caminho_indice)
     try:
-        return index.buscar(conexao, consulta, limite)
+        if modo == "lexico":
+            return index.buscar(conexao, consulta, limite)
+        if modo == "vetorial":
+            return index.buscar_vetorial(conexao, consulta, limite)
+        return index.buscar_hibrido(conexao, consulta, limite)
     finally:
         conexao.close()
 
@@ -111,16 +129,44 @@ def _carregar_perguntas(caminho_perguntas: Path) -> list[dict]:
     return yaml.safe_load(conteudo) or []
 
 
-def _buscar_no_modo(conexao, modo: str, pergunta: str) -> list[dict]:
+def _buscar_no_modo(
+    conexao,
+    modo: str,
+    pergunta: str,
+    embeddar_consulta_fn=None,
+    nome_modelo: str | None = None,
+    dimensao: int | None = None,
+) -> list[dict]:
     if modo == "lexico":
         return index.buscar(conexao, pergunta, limite=5)
-    raise ValueError(f"modo de busca ainda não implementado: {modo}")
+    if modo == "vetorial":
+        return index.buscar_vetorial(
+            conexao,
+            pergunta,
+            limite=5,
+            embeddar_consulta_fn=embeddar_consulta_fn,
+            nome_modelo=nome_modelo,
+            dimensao=dimensao,
+        )
+    if modo == "hibrido":
+        return index.buscar_hibrido(
+            conexao,
+            pergunta,
+            limite=5,
+            embeddar_consulta_fn=embeddar_consulta_fn,
+            nome_modelo=nome_modelo,
+            dimensao=dimensao,
+        )
+    raise ValueError(f"modo de busca desconhecido: {modo}")
 
 
 def executar_avaliacao(
     caminho_perguntas: Path,
     caminho_indice: str,
     modos: tuple[str, ...] = ("lexico",),
+    embeddar_consulta_fn=None,
+    nome_modelo: str | None = None,
+    dimensao: int | None = None,
 ) -> dict:
     """Roda cada pergunta do conjunto de avaliação e mede se o doc esperado aparece no top-5."""
     perguntas = _carregar_perguntas(caminho_perguntas)
@@ -133,7 +179,14 @@ def executar_avaliacao(
             esperado = item["esperado"]
             for modo in modos:
                 marcador = contagem[modo].setdefault(perfil, [0, 0])
-                topo = _buscar_no_modo(conexao, modo, item["pergunta"])
+                topo = _buscar_no_modo(
+                    conexao,
+                    modo,
+                    item["pergunta"],
+                    embeddar_consulta_fn=embeddar_consulta_fn,
+                    nome_modelo=nome_modelo,
+                    dimensao=dimensao,
+                )
                 acertou = any(r["caminho_origem"] == esperado for r in topo)
                 marcador[1] += 1
                 if acertou:
@@ -163,7 +216,9 @@ def formatar_tabela_avaliacao(contagem: dict) -> str:
 
 
 def _comando_avaliar(args: argparse.Namespace) -> None:
-    resultado = executar_avaliacao(Path(args.perguntas), args.indice)
+    resultado = executar_avaliacao(
+        Path(args.perguntas), args.indice, modos=("lexico", "vetorial", "hibrido")
+    )
     print(formatar_tabela_avaliacao(resultado))
 
 
@@ -221,12 +276,14 @@ def _comando_ingest(args: argparse.Namespace) -> None:
     Path(args.indice).parent.mkdir(parents=True, exist_ok=True)
     docs_normalizado.mkdir(parents=True, exist_ok=True)
 
-    relatorio = executar_ingestao(docs_fonte, docs_normalizado, args.indice)
+    relatorio = executar_ingestao(
+        docs_fonte, docs_normalizado, args.indice, sem_embeddings=args.sem_embeddings
+    )
     print(formatar_relatorio(relatorio))
 
 
 def _comando_search(args: argparse.Namespace) -> None:
-    resultados = executar_busca(args.indice, args.consulta, args.limite)
+    resultados = executar_busca(args.indice, args.consulta, args.limite, modo=args.modo)
     print(formatar_resultados(resultados))
 
 

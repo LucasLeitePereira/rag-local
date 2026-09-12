@@ -16,7 +16,7 @@ def _preparar_corpus(tmp_path):
         encoding="utf-8",
     )
     caminho_indice = str(tmp_path / "indice.db")
-    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
     return docs_normalizado, caminho_indice
 
 
