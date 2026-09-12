@@ -103,6 +103,25 @@ def test_avaliar_calcula_taxa_de_acerto_por_perfil_no_modo_lexico(tmp_path):
     assert resultado["lexico"]["natural"] == [0, 1]
 
 
+def test_stats_reporta_documentos_e_chunks_indexados(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Seção\n\nConteúdo com bastante texto para não ser descartado.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice)
+
+    stats = cli.executar_stats(caminho_indice)
+
+    assert stats["documentos"] == 1
+    assert stats["chunks"] == 1
+    assert stats["modelo"] is None
+
+
 def test_formatar_tabela_avaliacao_mostra_colunas_por_modo():
     resultado = {"lexico": {"tecnico": [9, 10], "natural": [3, 10]}}
 

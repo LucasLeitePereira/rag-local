@@ -167,6 +167,47 @@ def _comando_avaliar(args: argparse.Namespace) -> None:
     print(formatar_tabela_avaliacao(resultado))
 
 
+def executar_stats(caminho_indice: str) -> dict:
+    conexao = index.criar_indice(caminho_indice)
+    try:
+        total_chunks = conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        total_docs = conexao.execute(
+            "SELECT COUNT(DISTINCT caminho_origem) FROM chunks"
+        ).fetchone()[0]
+        modelo = None
+        tem_metadados = conexao.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='metadados_indice'"
+        ).fetchone()
+        if tem_metadados:
+            linha = conexao.execute(
+                "SELECT valor FROM metadados_indice WHERE chave = 'modelo'"
+            ).fetchone()
+            modelo = linha[0] if linha else None
+    finally:
+        conexao.close()
+    return {"documentos": total_docs, "chunks": total_chunks, "modelo": modelo}
+
+
+def formatar_stats(stats: dict) -> str:
+    return "\n".join(
+        [
+            f"Documentos indexados: {stats['documentos']}",
+            f"Chunks indexados:     {stats['chunks']}",
+            f"Modelo de embeddings: {stats['modelo'] or 'nenhum (modo léxico apenas)'}",
+        ]
+    )
+
+
+def _comando_stats(args: argparse.Namespace) -> None:
+    print(formatar_stats(executar_stats(args.indice)))
+
+
+def _comando_serve(args: argparse.Namespace) -> None:
+    from docserver.server import main as servir
+
+    servir()
+
+
 def _comando_ingest(args: argparse.Namespace) -> None:
     docs_fonte = Path(args.docs_fonte)
     docs_normalizado = Path(args.docs_normalizado)
@@ -210,6 +251,12 @@ def construir_parser() -> argparse.ArgumentParser:
     p_avaliar = subs.add_parser("avaliar", help="roda o conjunto de avaliação")
     p_avaliar.add_argument("perguntas")
     p_avaliar.set_defaults(func=_comando_avaliar)
+
+    p_serve = subs.add_parser("serve", help="sobe o servidor MCP em stdio")
+    p_serve.set_defaults(func=_comando_serve)
+
+    p_stats = subs.add_parser("stats", help="documentos, chunks, modelo, data da ingestão")
+    p_stats.set_defaults(func=_comando_stats)
 
     return parser
 
