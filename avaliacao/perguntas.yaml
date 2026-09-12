@@ -1,0 +1,75 @@
+- pergunta: "AUTH_TOKEN_TTL"
+  esperado: docs-fonte/guias/ambiente-local.md
+  perfil: tecnico
+
+- pergunta: "DATABASE_URL"
+  esperado: docs-fonte/guias/ambiente-local.md
+  perfil: tecnico
+
+- pergunta: "LOG_LEVEL"
+  esperado: docs-fonte/guias/ambiente-local.md
+  perfil: tecnico
+
+- pergunta: "o que preciso configurar para rodar o projeto na minha máquina"
+  esperado: docs-fonte/guias/ambiente-local.md
+  perfil: natural
+
+- pergunta: "como faço para incluir os testes lentos na suíte"
+  esperado: docs-fonte/guias/ambiente-local.md
+  perfil: natural
+
+- pergunta: "refresh token"
+  esperado: docs-fonte/arquitetura/autenticacao.md
+  perfil: tecnico
+
+- pergunta: "revogação de access token no logout"
+  esperado: docs-fonte/arquitetura/autenticacao.md
+  perfil: tecnico
+
+- pergunta: "quantas tentativas de senha até bloquear a conta"
+  esperado: docs-fonte/arquitetura/autenticacao.md
+  perfil: natural
+
+- pergunta: "o que acontece quando o cliente não paga"
+  esperado: docs-fonte/processos/inadimplencia.md
+  perfil: natural
+
+- pergunta: "quando a conta do cliente é cancelada por falta de pagamento"
+  esperado: docs-fonte/processos/inadimplencia.md
+  perfil: natural
+
+- pergunta: "prazo de suspensão por atraso"
+  esperado: docs-fonte/processos/inadimplencia.md
+  perfil: tecnico
+
+- pergunta: "rate limit da API"
+  esperado: docs-fonte/api/contratos.md
+  perfil: tecnico
+
+- pergunta: "Retry-After"
+  esperado: docs-fonte/api/contratos.md
+  perfil: tecnico
+
+- pergunta: "como funciona a paginação dos endpoints"
+  esperado: docs-fonte/api/contratos.md
+  perfil: natural
+
+- pergunta: "por quanto tempo uma versão antiga da API continua funcionando"
+  esperado: docs-fonte/api/contratos.md
+  perfil: natural
+
+- pergunta: "Redis cache"
+  esperado: docs-fonte/arquitetura/visao-geral.md
+  perfil: tecnico
+
+- pergunta: "qual banco de dados o sistema usa"
+  esperado: docs-fonte/arquitetura/visao-geral.md
+  perfil: natural
+
+- pergunta: "quando eu ganho acesso ao banco de produção"
+  esperado: docs-fonte/processos/onboarding.md
+  perfil: natural
+
+- pergunta: "primeiro deploy de um novo desenvolvedor"
+  esperado: docs-fonte/processos/onboarding.md
+  perfil: tecnico

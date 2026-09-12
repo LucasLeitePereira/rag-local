@@ -104,6 +104,69 @@ def formatar_resultados(resultados: list[dict]) -> str:
     return "\n\n".join(blocos)
 
 
+def _carregar_perguntas(caminho_perguntas: Path) -> list[dict]:
+    import yaml
+
+    conteudo = Path(caminho_perguntas).read_text(encoding="utf-8")
+    return yaml.safe_load(conteudo) or []
+
+
+def _buscar_no_modo(conexao, modo: str, pergunta: str) -> list[dict]:
+    if modo == "lexico":
+        return index.buscar(conexao, pergunta, limite=5)
+    raise ValueError(f"modo de busca ainda não implementado: {modo}")
+
+
+def executar_avaliacao(
+    caminho_perguntas: Path,
+    caminho_indice: str,
+    modos: tuple[str, ...] = ("lexico",),
+) -> dict:
+    """Roda cada pergunta do conjunto de avaliação e mede se o doc esperado aparece no top-5."""
+    perguntas = _carregar_perguntas(caminho_perguntas)
+    contagem: dict[str, dict[str, list[int]]] = {modo: {} for modo in modos}
+
+    conexao = index.criar_indice(caminho_indice)
+    try:
+        for item in perguntas:
+            perfil = item["perfil"]
+            esperado = item["esperado"]
+            for modo in modos:
+                marcador = contagem[modo].setdefault(perfil, [0, 0])
+                topo = _buscar_no_modo(conexao, modo, item["pergunta"])
+                acertou = any(r["caminho_origem"] == esperado for r in topo)
+                marcador[1] += 1
+                if acertou:
+                    marcador[0] += 1
+    finally:
+        conexao.close()
+
+    return contagem
+
+
+def formatar_tabela_avaliacao(contagem: dict) -> str:
+    modos = list(contagem.keys())
+    perfis = sorted({perfil for dados in contagem.values() for perfil in dados})
+
+    def _somar(perfil: str) -> list[int]:
+        acerto = sum(contagem[modo].get(perfil, [0, 0])[0] for modo in modos)
+        total = sum(contagem[modo].get(perfil, [0, 0])[1] for modo in modos)
+        return [acerto, total]
+
+    largura_perfil = max(len(p) for p in [*perfis, "geral"]) + 2
+    cabecalho = " " * largura_perfil + "".join(f"{modo:>10}" for modo in modos)
+    linhas = [cabecalho]
+    for perfil in perfis:
+        celulas = "".join(f"{contagem[modo][perfil][0]}/{contagem[modo][perfil][1]:<8}".rjust(10) for modo in modos)
+        linhas.append(f"{perfil:<{largura_perfil}}{celulas}")
+    return "\n".join(linhas)
+
+
+def _comando_avaliar(args: argparse.Namespace) -> None:
+    resultado = executar_avaliacao(Path(args.perguntas), args.indice)
+    print(formatar_tabela_avaliacao(resultado))
+
+
 def _comando_ingest(args: argparse.Namespace) -> None:
     docs_fonte = Path(args.docs_fonte)
     docs_normalizado = Path(args.docs_normalizado)
@@ -143,6 +206,10 @@ def construir_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--limite", type=int, default=5)
     p_search.add_argument("--modo", choices=["lexico", "vetorial", "hibrido"], default="hibrido")
     p_search.set_defaults(func=_comando_search)
+
+    p_avaliar = subs.add_parser("avaliar", help="roda o conjunto de avaliação")
+    p_avaliar.add_argument("perguntas")
+    p_avaliar.set_defaults(func=_comando_avaliar)
 
     return parser
 
