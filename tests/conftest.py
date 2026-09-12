@@ -39,22 +39,24 @@ def com_cabecalhos_md(criar_normalizado):
 @pytest.fixture
 def sem_cabecalhos_md(criar_normalizado):
     paragrafo = (
-        "Este é um parágrafo de exemplo com bastante conteúdo textual repetido "
-        "para simular um documento longo sem nenhum cabeçalho de seção. "
+        "Este é o parágrafo número {n} de exemplo com bastante conteúdo textual "
+        "para simular um documento longo sem nenhum cabeçalho de seção."
     )
-    corpo = "# Documento Sem Secoes\n\n" + (paragrafo * 80)
+    paragrafos = [paragrafo.format(n=i) for i in range(80)]
+    corpo = "# Documento Sem Secoes\n\n" + "\n\n".join(paragrafos)
     return criar_normalizado(corpo, origem="docs-fonte/corrido.md", nome="corrido.md")
 
 
 @pytest.fixture
 def secao_gigante_md(criar_normalizado):
     paragrafo = (
-        "Texto repetido para forçar a subdivisão da seção gigante em múltiplos blocos menores. "
+        "Parágrafo número {n} com texto para forçar a subdivisão da seção gigante em blocos menores."
     )
+    paragrafos = [paragrafo.format(n=i) for i in range(120)]
     corpo = (
         "# Documento Com Secao Gigante\n\n"
         "## Introdução\n\nTexto curto de introdução.\n\n"
-        "## Referência completa\n\n" + (paragrafo * 120) + "\n\n"
+        "## Referência completa\n\n" + "\n\n".join(paragrafos) + "\n\n"
         "## Conclusão\n\nTexto curto de conclusão.\n"
     )
     return criar_normalizado(corpo, origem="docs-fonte/referencia.md", nome="referencia.md")
