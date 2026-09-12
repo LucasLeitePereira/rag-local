@@ -30,6 +30,26 @@ def extrair_texto(caminho: Path) -> str | None:
     return funcao(caminho)
 
 
+def ler_front_matter(conteudo: str) -> tuple[dict[str, str], str]:
+    """Separa o front matter YAML (formato chave: valor simples) do corpo Markdown."""
+    if not conteudo.startswith("---\n"):
+        return {}, conteudo
+
+    fim = conteudo.index("\n---\n", 4)
+    bloco = conteudo[4:fim]
+    corpo = conteudo[fim + len("\n---\n") :]
+    if corpo.startswith("\n"):
+        corpo = corpo[1:]
+
+    meta: dict[str, str] = {}
+    for linha in bloco.splitlines():
+        if ":" not in linha:
+            continue
+        chave, _, valor = linha.partition(":")
+        meta[chave.strip()] = valor.strip()
+    return meta, corpo
+
+
 def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -> Path:
     """Extrai `caminho_origem` e grava o Markdown normalizado com front matter.
 

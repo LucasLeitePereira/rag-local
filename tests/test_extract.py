@@ -59,3 +59,19 @@ def test_front_matter_de_origem_e_escrito_no_arquivo_normalizado(tmp_path):
     assert "ingerido_em:" in conteudo
     assert "# Guia" in conteudo
     assert "Texto." in conteudo
+
+
+def test_ler_front_matter_separa_metadados_do_corpo():
+    conteudo = (
+        "---\n"
+        "origem: docs-fonte/guia.md\n"
+        "extrator: _extrair_texto_puro\n"
+        "ingerido_em: 2026-09-12T10:00:00\n"
+        "---\n\n"
+        "# Guia\n\nTexto.\n"
+    )
+
+    meta, corpo = extract.ler_front_matter(conteudo)
+
+    assert meta["origem"] == "docs-fonte/guia.md"
+    assert corpo == "# Guia\n\nTexto.\n"
