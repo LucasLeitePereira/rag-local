@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+docs-normalizado/*
+!docs-normalizado/.gitkeep
+data/*
+!data/.gitkeep
+.DS_Store
