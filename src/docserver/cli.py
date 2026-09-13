@@ -260,7 +260,7 @@ def _comando_stats(args: argparse.Namespace) -> None:
 def _comando_serve(args: argparse.Namespace) -> None:
     from docserver.server import main as servir
 
-    servir()
+    servir(docs_normalizado=Path(args.docs_normalizado), indice=args.indice)
 
 
 def _comando_ingest(args: argparse.Namespace) -> None:

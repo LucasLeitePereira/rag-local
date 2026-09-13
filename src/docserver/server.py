@@ -13,6 +13,16 @@ INDICE_PADRAO = "data/indice.db"
 
 mcp = FastMCP("docserver")
 
+# Caminhos usados pelas tools. O cliente MCP pode subir o processo em qualquer
+# diretório (Claude Desktop, por exemplo, não usa a pasta do projeto), então
+# `configurar` fixa caminhos absolutos a partir dos argumentos da CLI.
+_config: dict = {"docs_normalizado": DOCS_NORMALIZADO_PADRAO, "indice": INDICE_PADRAO}
+
+
+def configurar(docs_normalizado: Path, indice: str) -> None:
+    _config["docs_normalizado"] = Path(docs_normalizado).resolve()
+    _config["indice"] = str(Path(indice).resolve())
+
 
 def _todos_arquivos_normalizados(docs_normalizado: Path) -> list[Path]:
     if not docs_normalizado.exists():
@@ -39,6 +49,11 @@ def _listar_documentos_texto(docs_normalizado: Path) -> str:
 
 
 def _buscar_texto(caminho_indice: str, consulta: str, limite: int = 5) -> str:
+    if caminho_indice != ":memory:" and not Path(caminho_indice).exists():
+        return (
+            f"Índice não encontrado em {caminho_indice}. Rode 'docserver ingest' primeiro "
+            "(ou confira o --indice passado para 'docserver serve')."
+        )
     conexao = index.criar_indice(caminho_indice)
     try:
         resultados = index.buscar_hibrido(conexao, consulta, limite=limite)
@@ -94,7 +109,7 @@ def listar_documentos() -> str:
     seções de cada documento. Use esta ferramenta primeiro quando não souber o que existe
     na documentação, ou quando a busca por termos não retornar nada útil. Barata de
     chamar — prefira listar e ler o documento certo a fazer várias buscas às cegas."""
-    return _listar_documentos_texto(DOCS_NORMALIZADO_PADRAO)
+    return _listar_documentos_texto(_config["docs_normalizado"])
 
 
 @mcp.tool()
@@ -109,7 +124,7 @@ def buscar(consulta: str, limite: int = 5) -> str:
     por termo exato, ou o termo técnico provável se você buscou por descrição. Se o
     trecho retornado não for suficiente, chame `ler_documento` com o caminho indicado
     para ver o documento inteiro."""
-    return _buscar_texto(INDICE_PADRAO, consulta, limite)
+    return _buscar_texto(_config["indice"], consulta, limite)
 
 
 @mcp.tool()
@@ -117,8 +132,9 @@ def ler_documento(caminho: str) -> str:
     """Devolve o conteúdo completo de um documento da documentação do projeto. Use
     depois de `buscar` ou `listar_documentos`, quando o trecho retornado não trouxer
     contexto suficiente. Aceita tanto o caminho de origem quanto o normalizado."""
-    return _ler_documento_texto(caminho, DOCS_NORMALIZADO_PADRAO)
+    return _ler_documento_texto(caminho, _config["docs_normalizado"])
 
 
-def main() -> None:
+def main(docs_normalizado: Path = DOCS_NORMALIZADO_PADRAO, indice: str = INDICE_PADRAO) -> None:
+    configurar(docs_normalizado, indice)
     mcp.run()

@@ -86,3 +86,36 @@ def test_ler_documento_com_caminho_inexistente_retorna_mensagem_util(tmp_path):
     texto = server._ler_documento_texto("nao-existe.md", docs_normalizado)
 
     assert "não encontrado" in texto.lower()
+
+
+def test_buscar_com_indice_inexistente_orienta_a_rodar_ingest_sem_criar_arquivo(tmp_path):
+    caminho_indice = tmp_path / "nao-existe" / "indice.db"
+
+    texto = server._buscar_texto(str(caminho_indice), "token")
+
+    assert "docserver ingest" in texto
+    assert str(caminho_indice) in texto
+    assert not caminho_indice.exists()
+
+
+def test_serve_usa_caminhos_passados_na_cli_independente_do_diretorio_atual(tmp_path, monkeypatch):
+    docs_normalizado, caminho_indice = _preparar_corpus(tmp_path)
+    outro_dir = tmp_path / "outro-cwd"
+    outro_dir.mkdir()
+    monkeypatch.chdir(outro_dir)
+    monkeypatch.setattr(server.mcp, "run", lambda: None)
+
+    cli.main(["--docs-normalizado", str(docs_normalizado), "--indice", caminho_indice, "serve"])
+
+    assert "Renovação de token" in server.listar_documentos()
+    assert "docs-fonte/autenticacao.md" in server.buscar("refresh token")
+    assert "Renovação de token" in server.ler_documento("autenticacao.md")
+
+
+def test_configurar_resolve_caminhos_relativos_para_absolutos(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    server.configurar(Path("docs-normalizado"), "data/indice.db")
+
+    assert server._config["docs_normalizado"] == (tmp_path / "docs-normalizado").resolve()
+    assert Path(server._config["indice"]) == (tmp_path / "data" / "indice.db").resolve()

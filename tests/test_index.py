@@ -77,6 +77,22 @@ def test_reindexar_nao_duplica_chunks(conn):
     assert len(resultados) == 1
 
 
+def test_reindexar_com_vetores_em_conexao_nova_nao_falha(tmp_path):
+    caminho = str(tmp_path / "indice.db")
+    chunks = [_chunk(texto="Conteúdo único sobre faturamento.")]
+    embeddings = [[0.1, 0.2, 0.3]]
+
+    primeira = index.criar_indice(caminho)
+    index.indexar_chunks(primeira, chunks, embeddings=embeddings, nome_modelo="modelo-teste")
+    primeira.close()
+
+    segunda = index.criar_indice(caminho)
+    index.reindexar(segunda, chunks, embeddings=embeddings, nome_modelo="modelo-teste")
+
+    assert len(index.buscar(segunda, "faturamento")) == 1
+    segunda.close()
+
+
 def test_limite_restringe_a_quantidade_de_resultados(conn):
     chunks = [_chunk(ordem=i, texto=f"Chunk número {i} fala sobre relatórios.") for i in range(10)]
     index.indexar_chunks(conn, chunks)

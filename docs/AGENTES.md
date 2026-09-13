@@ -10,33 +10,45 @@ onde `docs-fonte/`, `docs-normalizado/` e `data/indice.db` existem.
 > está usando. Os exemplos abaixo mostram o formato do bloco de configuração,
 > não necessariamente o arquivo/local mais atual.
 
+> **Sempre passe caminhos absolutos.** O cliente MCP sobe o processo no
+> diretório que ele escolher (o Claude Desktop, por exemplo, não usa a pasta
+> do projeto e ignora uma chave `cwd`). Sem `--indice` e `--docs-normalizado`
+> absolutos, o servidor procura `data/indice.db` e `docs-normalizado/`
+> relativos a esse diretório e não encontra nada. As opções globais vêm
+> **antes** do subcomando `serve`.
+
 ## Claude Desktop
 
-No arquivo de configuração MCP do Claude Desktop:
+Em `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\`; macOS:
+`~/Library/Application Support/Claude/`):
 
 ```json
 {
   "mcpServers": {
     "docserver": {
-      "command": "docserver",
-      "args": ["serve"],
-      "cwd": "/caminho/absoluto/para/o/projeto"
+      "command": "/caminho/absoluto/para/o/projeto/.venv/bin/docserver",
+      "args": [
+        "--docs-normalizado", "/caminho/absoluto/para/o/projeto/docs-normalizado",
+        "--indice", "/caminho/absoluto/para/o/projeto/data/indice.db",
+        "serve"
+      ]
     }
   }
 }
 ```
 
-Se estiver usando o virtualenv do projeto em vez de uma instalação global,
-aponte `command` para o binário dentro do venv (`.venv/bin/docserver`).
+No Windows, o binário do venv é `.venv\Scripts\docserver.exe` (escape as
+barras no JSON: `"D:\\projeto\\.venv\\Scripts\\docserver.exe"`). Reinicie o
+Claude Desktop depois de editar o arquivo.
 
 ## Claude Code
 
 ```bash
-claude mcp add docserver -- docserver serve
+claude mcp add docserver -- /caminho/absoluto/.venv/bin/docserver   --docs-normalizado /caminho/absoluto/docs-normalizado   --indice /caminho/absoluto/data/indice.db   serve
 ```
 
-Ou, equivalentemente, adicione ao `.mcp.json` do projeto o mesmo bloco usado
-no Claude Desktop.
+Use o binário do venv: `docserver` só está no `PATH` com o venv ativado, e o
+Claude Code não o ativa. Depois, confira com `/mcp` dentro do Claude Code.
 
 ## VS Code / GitHub Copilot
 

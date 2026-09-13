@@ -142,6 +142,8 @@ def reindexar(
 ) -> None:
     conexao.execute("DELETE FROM chunks")
     if _tabela_vetorial_existe(conexao):
+        # conexão nova não conhece o módulo vec0 até a extensão ser carregada
+        _carregar_extensao_vec(conexao)
         conexao.execute("DELETE FROM chunks_vec")
     indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo=nome_modelo)
 

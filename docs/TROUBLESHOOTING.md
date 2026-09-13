@@ -31,6 +31,19 @@ versão (ver `docs/ARQUITETURA.md`, seção "Fase futura"). Solução prática
 hoje: rode o PDF por uma ferramenta de OCR externa antes de colocá-lo em
 `docs-fonte/`.
 
+## O cliente MCP não conecta, ou conecta mas não acha nenhum documento
+
+- O cliente sobe `docserver serve` num diretório que ele escolhe, não
+  necessariamente o do projeto. Passe `--docs-normalizado` e `--indice` com
+  caminhos **absolutos**, antes do `serve` (exemplos em `docs/AGENTES.md`).
+  Sem isso, `listar_documentos` responde "Nenhum documento indexado" e
+  `buscar` responde "Índice não encontrado em ...".
+- Use o caminho absoluto do binário do venv como `command`: o cliente não
+  ativa o venv, então `docserver` sozinho não está no `PATH`.
+- Teste o comando exato da configuração a partir de outro diretório
+  (ex.: `cd ~ && /caminho/.venv/bin/docserver --indice ... serve`). Ele deve
+  ficar parado esperando entrada — se sair com erro, o cliente também falha.
+
 ## O agente ignora as ferramentas e responde de memória
 
 - Confirme que o cliente MCP está de fato conectado ao `docserver` (veja
