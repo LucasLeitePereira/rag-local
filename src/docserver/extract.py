@@ -6,19 +6,68 @@ e uma entrada no dicionário EXTRATORES, nada mais.
 
 from __future__ import annotations
 
+import csv as _csv
 import datetime as _dt
 from pathlib import Path
 from typing import Callable
+
+MIN_CARACTERES_PDF_VALIDO = 200
+
+
+class ErroDeExtracao(Exception):
+    """Falha ao converter um arquivo original para Markdown."""
 
 
 def _extrair_texto_puro(caminho: Path) -> str:
     return caminho.read_text(encoding="utf-8")
 
 
+def _extrair_com_markitdown(caminho: Path) -> str:
+    from markitdown import MarkItDown
+
+    return MarkItDown().convert(str(caminho)).text_content
+
+
+def _extrair_pdf(caminho: Path) -> str:
+    texto = _extrair_com_markitdown(caminho)
+    if len(texto.strip()) >= MIN_CARACTERES_PDF_VALIDO:
+        return texto
+
+    try:
+        import pymupdf4llm
+
+        texto_alternativo = pymupdf4llm.to_markdown(str(caminho))
+    except Exception:
+        return texto
+
+    return texto_alternativo if len(texto_alternativo.strip()) > len(texto.strip()) else texto
+
+
+def _extrair_csv(caminho: Path) -> str:
+    with caminho.open(newline="", encoding="utf-8") as arquivo:
+        linhas = list(_csv.reader(arquivo))
+    if not linhas:
+        return ""
+
+    cabecalho, *resto = linhas
+    tabela = [
+        "| " + " | ".join(cabecalho) + " |",
+        "| " + " | ".join("---" for _ in cabecalho) + " |",
+    ]
+    tabela.extend("| " + " | ".join(linha) + " |" for linha in resto)
+    return "\n".join(tabela)
+
+
 EXTRATORES: dict[str, Callable[[Path], str]] = {
     ".md": _extrair_texto_puro,
     ".markdown": _extrair_texto_puro,
     ".txt": _extrair_texto_puro,
+    ".docx": _extrair_com_markitdown,
+    ".pptx": _extrair_com_markitdown,
+    ".xlsx": _extrair_com_markitdown,
+    ".html": _extrair_com_markitdown,
+    ".pdf": _extrair_pdf,
+    ".csv": _extrair_csv,
 }
 
 
@@ -27,7 +76,10 @@ def extrair_texto(caminho: Path) -> str | None:
     funcao = EXTRATORES.get(caminho.suffix.lower())
     if funcao is None:
         return None
-    return funcao(caminho)
+    try:
+        return funcao(caminho)
+    except Exception as erro:
+        raise ErroDeExtracao(f"falha ao extrair {caminho}: {erro}") from erro
 
 
 def ler_front_matter(conteudo: str) -> tuple[dict[str, str], str]:

@@ -61,6 +61,43 @@ def test_front_matter_de_origem_e_escrito_no_arquivo_normalizado(tmp_path):
     assert "Texto." in conteudo
 
 
+def test_docx_produz_markdown_com_os_cabecalhos_preservados(exemplo_docx):
+    resultado = extract.extrair_texto(exemplo_docx)
+
+    assert "Título do Documento" in resultado
+    assert "Primeira Seção" in resultado
+    assert "#" in resultado
+
+
+def test_csv_vira_tabela_markdown(tmp_path):
+    origem = tmp_path / "dados.csv"
+    origem.write_text("nome,idade\nAna,30\nBruno,25\n", encoding="utf-8")
+
+    resultado = extract.extrair_texto(origem)
+
+    assert "| nome | idade |" in resultado
+    assert "| Ana | 30 |" in resultado
+
+
+def test_arquivo_corrompido_registra_erro_e_nao_derruba_o_processo(corrompido_docx):
+    import pytest
+
+    with pytest.raises(extract.ErroDeExtracao):
+        extract.extrair_texto(corrompido_docx)
+
+
+def test_pdf_sem_texto_extraivel_e_marcado_como_suspeito(vazio_pdf):
+    resultado = extract.extrair_texto(vazio_pdf)
+
+    assert len(resultado.strip()) < 20
+
+
+def test_pdf_com_texto_extraivel_produz_conteudo(exemplo_pdf):
+    resultado = extract.extrair_texto(exemplo_pdf)
+
+    assert "Título do PDF de exemplo" in resultado
+
+
 def test_ler_front_matter_separa_metadados_do_corpo():
     conteudo = (
         "---\n"

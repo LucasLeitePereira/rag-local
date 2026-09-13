@@ -63,6 +63,54 @@ def secao_gigante_md(criar_normalizado):
 
 
 @pytest.fixture
+def exemplo_docx(tmp_path):
+    from docx import Document
+
+    documento = Document()
+    documento.add_heading("Título do Documento", level=1)
+    documento.add_heading("Primeira Seção", level=2)
+    documento.add_paragraph("Parágrafo de exemplo dentro da primeira seção.")
+
+    caminho = tmp_path / "exemplo.docx"
+    documento.save(caminho)
+    return caminho
+
+
+@pytest.fixture
+def corrompido_docx(tmp_path):
+    caminho = tmp_path / "corrompido.docx"
+    # assinatura de arquivo ZIP seguida de lixo: força o conversor de docx a ser
+    # tentado (e falhar), em vez de cair no fallback de texto puro do markitdown.
+    caminho.write_bytes(bytes([0x50, 0x4B, 0x03, 0x04]) + bytes(range(256)) * 4)
+    return caminho
+
+
+@pytest.fixture
+def exemplo_pdf(tmp_path):
+    import pymupdf
+
+    documento = pymupdf.open()
+    pagina = documento.new_page()
+    pagina.insert_text((72, 72), "Título do PDF de exemplo com texto extraível.")
+    caminho = tmp_path / "exemplo.pdf"
+    documento.save(caminho)
+    documento.close()
+    return caminho
+
+
+@pytest.fixture
+def vazio_pdf(tmp_path):
+    import pymupdf
+
+    documento = pymupdf.open()
+    documento.new_page()
+    caminho = tmp_path / "vazio.pdf"
+    documento.save(caminho)
+    documento.close()
+    return caminho
+
+
+@pytest.fixture
 def docs_fonte(tmp_path):
     caminho = tmp_path / "docs-fonte"
     caminho.mkdir()
