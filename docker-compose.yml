@@ -1,0 +1,12 @@
+services:
+  docserver:
+    build:
+      context: .
+      args:
+        COM_EMBEDDINGS: "true"
+    volumes:
+      - ./docs-fonte:/app/docs-fonte
+      - ./docs-normalizado:/app/docs-normalizado
+      - ./data:/app/data
+    stdin_open: true
+    tty: true

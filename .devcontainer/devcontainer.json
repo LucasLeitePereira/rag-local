@@ -1,0 +1,11 @@
+{
+  "name": "docserver",
+  "build": {
+    "context": "..",
+    "dockerfile": "../Dockerfile"
+  },
+  "workspaceFolder": "/app",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind",
+  "remoteUser": "docserver",
+  "postCreateCommand": "pip install --user -e '.[dev]'"
+}
