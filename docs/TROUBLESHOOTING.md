@@ -12,15 +12,40 @@
 4. Peça ao agente para chamar `listar_documentos` — se o documento nem
    aparece na árvore, ele não foi indexado (volte ao passo 1).
 
+## A busca mistura trechos de documentos diferentes
+
+Se `buscar` devolve trechos que claramente não têm nada a ver com a
+pergunta, ou de um documento diferente do que se esperava:
+
+1. Passe `documento` (caminho, parcial ou só o nome do arquivo) para
+   restringir a busca a um único documento — é a forma mais direta de
+   confirmar se o problema é o índice ter mais de um documento com
+   vocabulário parecido.
+2. Rode `docserver ingest` de novo e confira "Removidos" no relatório — um
+   `.md` de uma ingestão anterior cuja fonte em `docs-fonte/` foi apagada ou
+   renomeada fica órfão em `docs-normalizado/` até a próxima ingestão limpar
+   isso (ver `docs/INGESTAO.md`). Foi exatamente esse cenário — um PDF
+   apagado da fonte mas ainda indexado — que originalmente causava esse tipo
+   de mistura.
+3. Se mesmo assim um resultado claramente irrelevante aparecer, é o corte de
+   relevância (`SIMILARIDADE_MINIMA`, ver `docs/ARQUITETURA.md`) que precisa
+   de ajuste — aumente o valor via variável de ambiente se estiver frouxo
+   demais para o seu corpus.
+
 ## PDF virou texto embaralhado
 
 Alguns PDFs (principalmente com layout em colunas, tabelas complexas, ou
 fontes incomuns) confundem o extrator de texto. Abra o arquivo correspondente
 em `docs-normalizado/` para confirmar o problema, e veja no front matter qual
-extrator foi usado (`markitdown` ou `pymupdf4llm`). Se um dos dois for
+extrator foi usado (`pymupdf4llm` ou `markitdown`). Se um dos dois for
 consistentemente pior para o seu tipo de PDF, ajuste a lógica de fallback em
 `_extrair_pdf` (`src/docserver/extract.py`) — por exemplo, invertendo a
-ordem de tentativa para esse tipo de documento.
+ordem de tentativa para esse tipo de documento. Um sintoma específico do
+`pymupdf4llm` é palavra fragmentada em runs de 1-3 caracteres (efeito de
+kerning por caractere em alguns PDFs) — `_limpar_markdown_pdf` já remove o
+negrito/tachado espúrio ao redor dessas runs, mas não reconstrói a palavra;
+se isso for frequente no seu corpus, vale investir numa heurística de
+remontagem específica.
 
 ## PDF escaneado sem texto (aparece como "suspeito")
 

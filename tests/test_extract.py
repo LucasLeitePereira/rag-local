@@ -98,6 +98,68 @@ def test_pdf_com_texto_extraivel_produz_conteudo(exemplo_pdf):
     assert "Título do PDF de exemplo" in resultado
 
 
+def test_limpar_markdown_pdf_remove_negrito_e_tachado_fragmentados():
+    # amostra real de artefato do pymupdf4llm: runs de 1-3 caracteres em negrito e
+    # tachado por causa de variação de fonte/kerning no PDF de origem.
+    bruto = "**Apo** **~~i~~ o técn** **~~i~~ co** para o desenvolvimento"
+
+    limpo = extract._limpar_markdown_pdf(bruto)
+
+    assert "*" not in limpo
+    assert "~" not in limpo
+    assert "para o desenvolvimento" in limpo
+
+
+def test_limpar_markdown_pdf_remove_tags_html_residuais():
+    bruto = "<u>JANEIRO</u> primeira linha<br>segunda linha"
+
+    limpo = extract._limpar_markdown_pdf(bruto)
+
+    assert "<u>" not in limpo and "</u>" not in limpo
+    assert "<br>" not in limpo
+    assert "JANEIRO" in limpo
+
+
+def test_limpar_markdown_pdf_remove_comentarios_de_texto_de_imagem():
+    bruto = "<!-- Start of picture text -->01 Nome do projeto<!-- End of picture text -->"
+
+    limpo = extract._limpar_markdown_pdf(bruto)
+
+    assert "picture text" not in limpo
+    assert "01 Nome do projeto" in limpo
+
+
+def test_limpar_markdown_pdf_preserva_cabecalhos_com_negrito():
+    bruto = "## **1. Visão Geral**\n\nTexto qualquer da seção."
+
+    limpo = extract._limpar_markdown_pdf(bruto)
+
+    assert limpo.startswith("## 1. Visão Geral")
+
+
+def test_limpar_markdown_pdf_colapsa_linhas_em_branco_e_espacos_demais():
+    bruto = "Primeira linha.\n\n\n\n\nSegunda   linha   com   espaços."
+
+    limpo = extract._limpar_markdown_pdf(bruto)
+
+    assert "\n\n\n" not in limpo
+    assert "   " not in limpo
+
+
+def test_extrair_pdf_usa_pymupdf4llm_e_registra_no_front_matter(tmp_path, exemplo_pdf):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    origem = docs_fonte / "exemplo.pdf"
+    origem.write_bytes(exemplo_pdf.read_bytes())
+
+    caminho_saida = extract.normalizar(origem, docs_fonte, docs_normalizado)
+
+    conteudo = caminho_saida.read_text(encoding="utf-8")
+    assert "extrator: pymupdf4llm" in conteudo or "extrator: markitdown" in conteudo
+
+
 def test_ler_front_matter_separa_metadados_do_corpo():
     conteudo = (
         "---\n"

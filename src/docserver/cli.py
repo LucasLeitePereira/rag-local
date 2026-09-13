@@ -35,9 +35,11 @@ def executar_ingestao(
         "ignorados": [],
         "falhas": [],
         "suspeitos": [],
+        "removidos": [],
     }
 
     todos_chunks: list[dict] = []
+    gerados: set[Path] = set()
     for caminho in sorted(p for p in docs_fonte.rglob("*") if p.is_file()):
         if _deve_ignorar(caminho):
             continue
@@ -50,6 +52,7 @@ def executar_ingestao(
             relatorio["falhas"].append((str(caminho), str(erro)))
             continue
 
+        gerados.add(caminho_normalizado_arquivo.resolve())
         relatorio["processados"] += 1
         conteudo = caminho_normalizado_arquivo.read_text(encoding="utf-8")
         _, corpo = extract.ler_front_matter(conteudo)
@@ -57,6 +60,19 @@ def executar_ingestao(
             relatorio["suspeitos"].append(str(caminho))
 
         todos_chunks.extend(chunk.chunkar_arquivo(caminho_normalizado_arquivo))
+
+    # arquivos normalizados cuja fonte original sumiu (foi apagada, renomeada, ou
+    # passou a falhar na extração) não devem continuar servíveis nem aparecer na
+    # listagem — é exatamente o que causava respostas misturando documentos.
+    for orfao in sorted(p for p in docs_normalizado.rglob("*.md") if p.is_file()):
+        if orfao.resolve() not in gerados:
+            orfao.unlink()
+            relatorio["removidos"].append(str(orfao))
+    for pasta in sorted((p for p in docs_normalizado.rglob("*") if p.is_dir()), reverse=True):
+        try:
+            pasta.rmdir()
+        except OSError:
+            pass
 
     embeddings = None
     if not sem_embeddings and todos_chunks:
@@ -81,6 +97,7 @@ def formatar_relatorio(relatorio: dict) -> str:
         f"  Ignorados (formato):     {len(relatorio['ignorados'])}",
         f"  Falhas de extração:      {len(relatorio['falhas'])}",
         f"  Suspeitos (texto vazio): {len(relatorio['suspeitos'])}",
+        f"  Removidos (órfãos):      {len(relatorio['removidos'])}",
     ]
     if relatorio["falhas"]:
         linhas.append("")
@@ -92,19 +109,24 @@ def formatar_relatorio(relatorio: dict) -> str:
         linhas.append("Suspeitos (provável PDF escaneado, sem texto extraível):")
         for caminho in relatorio["suspeitos"]:
             linhas.append(f"  ? {caminho}")
+    if relatorio["removidos"]:
+        linhas.append("")
+        linhas.append("Removidos (fonte original não existe mais):")
+        for caminho in relatorio["removidos"]:
+            linhas.append(f"  - {caminho}")
     return "\n".join(linhas)
 
 
 def executar_busca(
-    caminho_indice: str, consulta: str, limite: int = 5, modo: str = "hibrido"
+    caminho_indice: str, consulta: str, limite: int = 5, modo: str = "hibrido", origem: str | None = None
 ) -> list[dict]:
     conexao = index.criar_indice(caminho_indice)
     try:
         if modo == "lexico":
-            return index.buscar(conexao, consulta, limite)
+            return index.buscar(conexao, consulta, limite, origem=origem)
         if modo == "vetorial":
-            return index.buscar_vetorial(conexao, consulta, limite)
-        return index.buscar_hibrido(conexao, consulta, limite)
+            return index.buscar_vetorial(conexao, consulta, limite, origem=origem)
+        return index.buscar_hibrido(conexao, consulta, limite, origem=origem)
     finally:
         conexao.close()
 
@@ -112,9 +134,10 @@ def executar_busca(
 def formatar_resultados(resultados: list[dict]) -> str:
     if not resultados:
         return (
-            "Nenhum resultado encontrado. Tente reformular a consulta "
-            "(termo técnico exato ou pergunta em linguagem natural) "
-            "ou use listar_documentos para ver o que existe."
+            "Nenhum trecho relevante encontrado. Tente reformular a consulta "
+            "(termo técnico exato ou pergunta em linguagem natural), restrinja a um "
+            "documento específico com o parâmetro documento, ou use listar_documentos "
+            "para ver o que existe."
         )
     blocos = []
     for i, r in enumerate(resultados, 1):
@@ -260,7 +283,13 @@ def _comando_stats(args: argparse.Namespace) -> None:
 def _comando_serve(args: argparse.Namespace) -> None:
     from docserver.server import main as servir
 
-    servir(docs_normalizado=Path(args.docs_normalizado), indice=args.indice)
+    servir(
+        docs_normalizado=Path(args.docs_normalizado),
+        indice=args.indice,
+        transporte="http" if args.http else "stdio",
+        host=args.host,
+        porta=args.porta,
+    )
 
 
 def _comando_ingest(args: argparse.Namespace) -> None:
@@ -283,7 +312,24 @@ def _comando_ingest(args: argparse.Namespace) -> None:
 
 
 def _comando_search(args: argparse.Namespace) -> None:
-    resultados = executar_busca(args.indice, args.consulta, args.limite, modo=args.modo)
+    origem = None
+    if args.documento:
+        conexao = index.criar_indice(args.indice)
+        try:
+            candidatos = index.resolver_origem(conexao, args.documento)
+        finally:
+            conexao.close()
+        if not candidatos:
+            print(f"Documento não encontrado: {args.documento}. Use 'docserver stats' ou verifique o índice.")
+            return
+        if len(candidatos) > 1:
+            print(f"Caminho ambíguo, mais de um documento corresponde a '{args.documento}':")
+            for candidato in candidatos:
+                print(f"  - {candidato}")
+            return
+        origem = candidatos[0]
+
+    resultados = executar_busca(args.indice, args.consulta, args.limite, modo=args.modo, origem=origem)
     print(formatar_resultados(resultados))
 
 
@@ -303,13 +349,19 @@ def construir_parser() -> argparse.ArgumentParser:
     p_search.add_argument("consulta")
     p_search.add_argument("--limite", type=int, default=5)
     p_search.add_argument("--modo", choices=["lexico", "vetorial", "hibrido"], default="hibrido")
+    p_search.add_argument("--documento", help="restringe a busca a um documento (caminho, parcial ou nome)")
     p_search.set_defaults(func=_comando_search)
 
     p_avaliar = subs.add_parser("avaliar", help="roda o conjunto de avaliação")
     p_avaliar.add_argument("perguntas")
     p_avaliar.set_defaults(func=_comando_avaliar)
 
-    p_serve = subs.add_parser("serve", help="sobe o servidor MCP em stdio")
+    p_serve = subs.add_parser("serve", help="sobe o servidor MCP (stdio por padrão, ou HTTP com --http)")
+    p_serve.add_argument(
+        "--http", action="store_true", help="expõe o servidor via HTTP (dá um link) em vez de stdio"
+    )
+    p_serve.add_argument("--host", default="127.0.0.1", help="apenas com --http")
+    p_serve.add_argument("--porta", type=int, default=8765, help="apenas com --http")
     p_serve.set_defaults(func=_comando_serve)
 
     p_stats = subs.add_parser("stats", help="documentos, chunks, modelo, data da ingestão")

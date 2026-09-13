@@ -233,6 +233,48 @@ def test_stats_reporta_documentos_e_chunks_indexados(tmp_path):
     assert stats["modelo"] is None
 
 
+def test_ingestao_remove_normalizado_orfao_quando_fonte_e_apagada(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    origem = docs_fonte / "temporario.md"
+    origem.write_text(
+        "# Temporário\n\n## Seção\n\nConteúdo qualquer com texto suficiente para não ser descartado.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+    assert (docs_normalizado / "temporario.md").exists()
+
+    origem.unlink()
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert not (docs_normalizado / "temporario.md").exists()
+    assert relatorio["removidos"] == [str(docs_normalizado / "temporario.md")]
+    assert cli.executar_busca(caminho_indice, "temporário") == []
+
+
+def test_busca_com_documento_restringe_ao_arquivo_indicado(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    docs_normalizado.mkdir()
+    (docs_fonte / "a.md").write_text(
+        "# Doc A\n\n## Prazo\n\nO prazo de entrega do documento A é de 10 dias.\n", encoding="utf-8"
+    )
+    (docs_fonte / "b.md").write_text(
+        "# Doc B\n\n## Prazo\n\nO prazo de entrega do documento B é de 20 dias.\n", encoding="utf-8"
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    resultados = cli.executar_busca(caminho_indice, "prazo de entrega", origem="docs-fonte/b.md")
+
+    assert len(resultados) == 1
+    assert resultados[0]["caminho_origem"] == "docs-fonte/b.md"
+
+
 def test_formatar_tabela_avaliacao_mostra_colunas_por_modo():
     resultado = {"lexico": {"tecnico": [9, 10], "natural": [3, 10]}}
 

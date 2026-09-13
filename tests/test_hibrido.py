@@ -118,6 +118,93 @@ def test_indice_vetorial_ausente_cai_para_bm25_e_registra_aviso(caplog):
     assert any("léxic" in registro.message.lower() or "bm25" in registro.message.lower() for registro in caplog.records)
 
 
+def test_hibrido_com_origem_so_retorna_chunks_daquele_documento():
+    conexao = conn()
+    chunks = [
+        _chunk(caminho_origem="docs-fonte/a.md", ordem=0, texto="Prazo de entrega do contrato A."),
+        _chunk(caminho_origem="docs-fonte/b.md", ordem=0, texto="Prazo de entrega do contrato B."),
+    ]
+    embeddings = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "prazo de entrega",
+        origem="docs-fonte/b.md",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert resultados
+    assert all(r["caminho_origem"] == "docs-fonte/b.md" for r in resultados)
+
+
+def test_chunk_sem_relacao_com_a_consulta_e_descartado_do_hibrido():
+    conexao = conn()
+    chunks = [
+        _chunk(ordem=0, texto="Calendário de feriados e datas letivas da faculdade."),
+        _chunk(ordem=1, texto="Explica o objetivo do projeto de segurança urbana da prefeitura."),
+    ]
+    # embedding do chunk 0 ortogonal à consulta (similaridade baixa); chunk 1 idêntico.
+    embeddings = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "objetivo do projeto de segurança urbana",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    textos = [r["texto"] for r in resultados]
+    assert any("segurança urbana" in t for t in textos)
+    assert not any("Calendário" in t for t in textos)
+
+
+def test_hibrido_sem_nenhum_resultado_relevante_devolve_lista_vazia():
+    conexao = conn()
+    chunks = [_chunk(ordem=0, texto="Um assunto qualquer, completamente sem relação com a busca.")]
+    embeddings = [[0.0, 1.0, 0.0]]
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "receita de bolo de cenoura",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert resultados == []
+
+
+def test_acerto_lexico_em_apenas_um_termo_raro_nao_e_descartado_pelo_corte_de_relevancia():
+    # regressão: um corte de relevância que exige cobertura de >=50% dos termos da
+    # consulta é mais rígido que o próprio BM25 que gerou a lista léxica — um chunk
+    # pode ser o melhor resultado léxico contendo só um dos termos (ex.: "paginação"
+    # sem "endpoints") e ainda assim era descartado antes desta correção.
+    conexao = conn()
+    chunks = [
+        _chunk(ordem=0, texto="Listagens usam paginação por cursor, sem número de página."),
+        _chunk(ordem=1, texto="Um chunk qualquer, sem relação nenhuma com a consulta."),
+    ]
+    # embeddings ortogonais à consulta nos dois chunks: só o léxico deveria salvar o acerto.
+    embeddings = [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "como funciona a paginação dos endpoints",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert any("paginação" in r["texto"] for r in resultados)
+
+
 def test_modelo_divergente_gera_erro_explicito_na_abertura_do_indice():
     conexao = conn()
     chunks = [_chunk(texto="Conteúdo qualquer para indexar com o modelo A.")]

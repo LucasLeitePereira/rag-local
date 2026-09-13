@@ -108,3 +108,48 @@ def test_termo_com_aspas_ou_caractere_especial_nao_quebra_a_query_fts(conn):
     resultados = index.buscar(conn, 'AUTH_TOKEN_TTL "não fechada')
 
     assert isinstance(resultados, list)
+
+
+def test_stopwords_da_consulta_nao_geram_falso_match(conn):
+    index.indexar_chunks(conn, [_chunk(texto="Conteúdo qualquer que não fala sobre o assunto perguntado.")])
+
+    resultados = index.buscar(conn, "qual é o")
+
+    assert resultados == []
+
+
+def test_consulta_so_com_stopwords_nao_quebra_a_busca(conn):
+    index.indexar_chunks(conn, [_chunk(texto="Conteúdo qualquer.")])
+
+    resultados = index.buscar(conn, "o a de")
+
+    assert isinstance(resultados, list)
+
+
+def test_busca_com_origem_so_retorna_chunks_daquele_documento(conn):
+    index.indexar_chunks(
+        conn,
+        [
+            _chunk(caminho_origem="docs-fonte/a.md", texto="Prazo de entrega do documento A."),
+            _chunk(caminho_origem="docs-fonte/b.md", texto="Prazo de entrega do documento B."),
+        ],
+    )
+
+    resultados = index.buscar(conn, "entrega", origem="docs-fonte/b.md")
+
+    assert len(resultados) == 1
+    assert resultados[0]["caminho_origem"] == "docs-fonte/b.md"
+
+
+def test_resolver_origem_por_nome_de_arquivo_sem_caminho(conn):
+    index.indexar_chunks(conn, [_chunk(caminho_origem="docs-fonte/arquitetura/visao-geral.md")])
+
+    candidatos = index.resolver_origem(conn, "visao-geral.md")
+
+    assert candidatos == ["docs-fonte/arquitetura/visao-geral.md"]
+
+
+def test_resolver_origem_documento_inexistente_nao_encontra_nada(conn):
+    index.indexar_chunks(conn, [_chunk(caminho_origem="docs-fonte/a.md")])
+
+    assert index.resolver_origem(conn, "nao-existe.md") == []

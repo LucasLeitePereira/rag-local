@@ -8,10 +8,48 @@ from __future__ import annotations
 
 import csv as _csv
 import datetime as _dt
+import re
 from pathlib import Path
 from typing import Callable
 
 MIN_CARACTERES_PDF_VALIDO = 200
+
+# Nome do extrator de PDF efetivamente usado na última chamada a `_extrair_pdf` —
+# `normalizar()` lê essa variável logo em seguida para gravar no front matter qual
+# das duas bibliotecas produziu o texto (o dicionário EXTRATORES só sabe o nome da
+# função `_extrair_pdf`, não qual lib ela escolheu internamente). Não é thread-safe,
+# mas a ingestão processa um arquivo de cada vez.
+_ultimo_extrator_pdf = "pymupdf4llm"
+
+_STRIKETHROUGH = re.compile(r"~~([^\n~]+?)~~")
+_NEGRITO = re.compile(r"\*\*([^\n*]+?)\*\*")
+_TAG_QUEBRA_LINHA = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_TAG_SUBLINHADO = re.compile(r"</?u>", re.IGNORECASE)
+_COMENTARIO_HTML = re.compile(r"<!--.*?-->")
+_CABECALHO_VAZIO = re.compile(r"^#+[ \t]*$", re.MULTILINE)
+_LINHAS_EM_BRANCO_DEMAIS = re.compile(r"\n{3,}")
+_ESPACOS_REPETIDOS = re.compile(r"[ \t]{2,}")
+
+
+def _limpar_markdown_pdf(texto: str) -> str:
+    """Remove artefatos de formatação típicos do pymupdf4llm: negrito/tachado que a
+    biblioteca aplica a runs de 1-3 caracteres por variação de fonte no PDF original
+    (`**Apo** **~~i~~ o técn**...`), comentários `<!-- Start/End of picture text -->`
+    ao redor de texto extraído de imagens, tags HTML residuais de tabelas/sublinhado
+    e espaçamento excessivo.
+
+    Isso NÃO reconstrói palavras eventualmente fragmentadas pelo PDF de origem —
+    corrigir esse tipo de fragmentação exigiria heurística lexical bem mais pesada
+    e específica do documento; aqui só se tira o ruído de marcação em torno delas."""
+    texto = _STRIKETHROUGH.sub(r"\1", texto)
+    texto = _TAG_QUEBRA_LINHA.sub(" ", texto)
+    texto = _TAG_SUBLINHADO.sub("", texto)
+    texto = _COMENTARIO_HTML.sub("", texto)
+    texto = _NEGRITO.sub(r"\1", texto)
+    texto = _CABECALHO_VAZIO.sub("", texto)
+    texto = _LINHAS_EM_BRANCO_DEMAIS.sub("\n\n", texto)
+    texto = _ESPACOS_REPETIDOS.sub(" ", texto)
+    return texto.strip()
 
 
 class ErroDeExtracao(Exception):
@@ -29,18 +67,34 @@ def _extrair_com_markitdown(caminho: Path) -> str:
 
 
 def _extrair_pdf(caminho: Path) -> str:
-    texto = _extrair_com_markitdown(caminho)
-    if len(texto.strip()) >= MIN_CARACTERES_PDF_VALIDO:
-        return texto
+    """pymupdf4llm é o extrator principal: preserva cabeçalhos (o markitdown não gera
+    nenhum) e não gruda palavras entre si como o markitdown costuma fazer. Cai para
+    o markitdown só quando o pymupdf4llm falha ou devolve pouco texto (PDF escaneado,
+    por exemplo) — nesse caso fica o que vier mais longo dos dois."""
+    global _ultimo_extrator_pdf
 
     try:
         import pymupdf4llm
 
-        texto_alternativo = pymupdf4llm.to_markdown(str(caminho))
+        texto = _limpar_markdown_pdf(pymupdf4llm.to_markdown(str(caminho)))
     except Exception:
+        texto = ""
+
+    if len(texto.strip()) >= MIN_CARACTERES_PDF_VALIDO:
+        _ultimo_extrator_pdf = "pymupdf4llm"
         return texto
 
-    return texto_alternativo if len(texto_alternativo.strip()) > len(texto.strip()) else texto
+    try:
+        texto_alternativo = _extrair_com_markitdown(caminho)
+    except Exception:
+        _ultimo_extrator_pdf = "pymupdf4llm"
+        return texto
+
+    if len(texto_alternativo.strip()) > len(texto.strip()):
+        _ultimo_extrator_pdf = "markitdown"
+        return texto_alternativo
+    _ultimo_extrator_pdf = "pymupdf4llm"
+    return texto
 
 
 def _extrair_csv(caminho: Path) -> str:
@@ -118,6 +172,8 @@ def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -
 
     origem_str = f"docs-fonte/{caminho_relativo.as_posix()}"
     extrator = EXTRATORES[caminho_origem.suffix.lower()].__name__
+    if caminho_origem.suffix.lower() == ".pdf":
+        extrator = _ultimo_extrator_pdf
     ingerido_em = _dt.datetime.now().isoformat(timespec="seconds")
 
     front_matter = (

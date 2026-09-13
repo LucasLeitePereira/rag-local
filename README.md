@@ -66,7 +66,7 @@ cd rag-local
 
 ```powershell
 py -3 -m venv .venv
-.venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 ```
 
 Se aparecer erro de "execução de scripts desabilitada", libere uma vez para o
@@ -147,7 +147,8 @@ cd rag-local
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+.\venv\Scripts\Activate.ps1
+
 ```
 
 **4. Instale o projeto:**

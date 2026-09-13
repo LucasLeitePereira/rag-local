@@ -39,10 +39,12 @@ def texto_para_embeddar(chunk: dict) -> str:
 def embeddar_passagem(chunk: dict) -> list[float]:
     modelo = obter_modelo()
     texto = preparar_passagem(texto_para_embeddar(chunk))
-    return modelo.encode(texto).tolist()
+    # normalizado para norma 1: permite converter a distância L2 do índice vetorial
+    # em similaridade de cosseno com `sim = 1 - distancia**2 / 2` (ver index.py).
+    return modelo.encode(texto, normalize_embeddings=True).tolist()
 
 
 def embeddar_consulta(consulta: str) -> list[float]:
     modelo = obter_modelo()
     texto = preparar_consulta(consulta)
-    return modelo.encode(texto).tolist()
+    return modelo.encode(texto, normalize_embeddings=True).tolist()
