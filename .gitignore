@@ -10,3 +10,5 @@ docs-normalizado/*
 data/*
 !data/.gitkeep
 .DS_Store
+.vscode/
+docs-fonte/*.pdf

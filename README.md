@@ -11,16 +11,61 @@ para uma fase futura.
 
 ## Quickstart
 
+### 1. Criar e ativar o ambiente virtual
+
 ```bash
-pip install -e ".[embeddings,dev]"          # ou: docker compose build
-cp seus-documentos/* docs-fonte/            # jogue seus arquivos aqui
-docserver ingest                            # extrai, normaliza e indexa
-docserver search "sua pergunta"             # valida a busca pelo terminal
-docserver serve                             # sobe o servidor MCP (stdio)
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 ```
 
-Aponte seu cliente MCP para `docserver serve` — veja
-[`docs/AGENTES.md`](docs/AGENTES.md) para exemplos de configuração.
+### 2. Instalar o projeto
+
+```bash
+pip install -e ".[embeddings,dev]"
+```
+
+Sem a extra `embeddings` (`pip install -e .`), a busca funciona em modo
+léxico puro (BM25) — mais rápido de instalar, sem baixar
+`sentence-transformers`/`torch`. Veja [`docs/DEPLOY.md`](docs/DEPLOY.md) para
+a alternativa via Docker.
+
+### 3. Adicionar seus documentos
+
+```bash
+cp seus-documentos/* docs-fonte/            # em qualquer estrutura de pastas, tanto faz
+```
+
+Formatos suportados: `.md`, `.txt`, `.docx`, `.pptx`, `.xlsx`, `.html`,
+`.pdf`, `.csv` — detalhes em [`docs/INGESTAO.md`](docs/INGESTAO.md).
+
+### 4. Ingerir e indexar
+
+```bash
+docserver ingest
+```
+
+Extrai cada arquivo, normaliza em Markdown (`docs-normalizado/`) e indexa
+para busca léxica + vetorial. Rode de novo sempre que adicionar, editar ou
+remover arquivos em `docs-fonte/`.
+
+### 5. Validar a busca pelo terminal
+
+```bash
+docserver search "sua pergunta"
+docserver stats                             # confere quantos chunks foram indexados
+```
+
+### 6. Subir o servidor MCP
+
+```bash
+docserver serve
+```
+
+Isso sobe o servidor via stdio — não é para rodar solto no terminal e deixar
+aberto, é o comando que o **cliente MCP** (Claude Desktop, Claude Code,
+Cursor, VS Code) invoca sozinho quando você o configura apontando para
+`docserver serve`. Veja [`docs/AGENTES.md`](docs/AGENTES.md) para o passo a
+passo de configuração de cada cliente.
 
 ## Documentação
 
