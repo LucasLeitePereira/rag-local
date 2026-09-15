@@ -147,3 +147,37 @@ def test_comando_watch_com_fonte_inexistente_sai_com_erro(tmp_path, capsys):
         cli.main(["--docs-fonte", str(tmp_path / "nao-existe"), "--indice", str(tmp_path / "i.db"), "watch"])
     assert saida.value.code == 1
     assert "abortada" in capsys.readouterr().err.lower()
+
+
+def test_modified_sem_mudanca_real_nao_registra_mas_conteudo_novo_sim(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_fonte.mkdir()
+    guia = docs_fonte / "guia.md"
+    guia.write_text("# Guia\n\nconteúdo inicial\n", encoding="utf-8")
+    agrupador = watch.Agrupador(espera=0)
+    manipulador = watch._Manipulador(agrupador, docs_fonte)
+
+    guia.read_text(encoding="utf-8")  # leitura (último acesso) gera `modified` no Windows
+    manipulador.dispatch(FileModifiedEvent(str(guia)))
+    assert not agrupador.pronto()
+
+    guia.write_text("# Guia\n\nconteúdo inicial, agora bem maior que antes\n", encoding="utf-8")
+    manipulador.dispatch(FileModifiedEvent(str(guia)))
+    assert agrupador.pronto()
+
+    agrupador.consumir()
+    manipulador.dispatch(FileModifiedEvent(str(guia)))  # mesmo estado já visto
+    assert not agrupador.pronto()
+
+
+def test_modified_de_arquivo_criado_depois_da_partida_registra(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_fonte.mkdir()
+    agrupador = watch.Agrupador(espera=0)
+    manipulador = watch._Manipulador(agrupador, docs_fonte)
+    novo = docs_fonte / "novo.md"
+    novo.write_text("# Novo\n", encoding="utf-8")
+
+    manipulador.dispatch(FileModifiedEvent(str(novo)))
+
+    assert agrupador.pronto()

@@ -59,17 +59,56 @@ def arquivo_relevante(caminho: str | bytes) -> bool:
     return not cli._deve_ignorar(arquivo) and arquivo.suffix.lower() in extract.EXTRATORES
 
 
+def _chave(caminho: str | bytes) -> str:
+    return os.path.normcase(os.path.abspath(os.fsdecode(caminho)))
+
+
+def _estado(caminho: str) -> tuple[int, int] | None:
+    """(tamanho, mtime_ns) do arquivo, ou None se ele não existe."""
+    try:
+        info = os.stat(caminho)
+    except OSError:
+        return None
+    return info.st_size, info.st_mtime_ns
+
+
 class _Manipulador(FileSystemEventHandler):
-    def __init__(self, agrupador: Agrupador) -> None:
+    """Registra no agrupador as mudanças em arquivos que a ingestão leria.
+
+    No Windows, só ler um arquivo (o que a própria ingestão faz) atualiza o último
+    acesso e gera um evento `modified` — sem filtro, cada ingestão disparava a
+    próxima. Por isso `modified` só conta se tamanho ou mtime mudaram em relação ao
+    último estado visto; `docs_fonte` pré-carrega esse estado na partida."""
+
+    def __init__(self, agrupador: Agrupador, docs_fonte: Path | None = None) -> None:
         self._agrupador = agrupador
+        self._estados: dict[str, tuple[int, int] | None] = {}
+        if docs_fonte is not None:
+            for arquivo in Path(docs_fonte).rglob("*"):
+                if arquivo.is_file() and arquivo_relevante(str(arquivo)):
+                    self._estados[_chave(str(arquivo))] = _estado(str(arquivo))
+
+    def _atualizar(self, caminho: str | bytes) -> bool:
+        """Grava o estado atual e diz se ele difere do anterior (ou se é desconhecido)."""
+        chave = _chave(caminho)
+        atual = _estado(chave)
+        mudou = chave not in self._estados or self._estados[chave] != atual
+        self._estados[chave] = atual
+        return mudou
 
     def on_any_event(self, event: FileSystemEvent) -> None:
         if event.is_directory or event.event_type in ("opened", "closed_no_write"):
             return
-        caminhos = [event.src_path, getattr(event, "dest_path", "")]
+        if event.event_type == "modified":
+            if arquivo_relevante(event.src_path) and self._atualizar(event.src_path):
+                self._agrupador.registrar()
+            return
+        caminhos = [c for c in (event.src_path, getattr(event, "dest_path", "")) if c]
+        for caminho in caminhos:
+            self._atualizar(caminho)
         # renomear `rascunho.tmp` para `guia.md` só é relevante pelo destino, e
         # `guia.md` para `guia.bak` só pela origem — por isso vale qualquer um dos dois.
-        if any(c and arquivo_relevante(c) for c in caminhos):
+        if any(arquivo_relevante(c) for c in caminhos):
             self._agrupador.registrar()
 
 
@@ -110,7 +149,7 @@ def observar(
     # o observador sobe antes da ingestão inicial: o que mudar enquanto ela roda
     # vira uma pendência, em vez de se perder
     observador = Observer()
-    observador.schedule(_Manipulador(agrupador), str(docs_fonte), recursive=True)
+    observador.schedule(_Manipulador(agrupador, docs_fonte), str(docs_fonte), recursive=True)
     observador.start()
     try:
         _log("ingestão inicial")

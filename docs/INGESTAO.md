@@ -137,6 +137,12 @@ quase zero.
 | Linux | `inotify` |
 | macOS | `FSEvents` |
 
+No Windows, só **ler** um arquivo atualiza o último acesso e gera um evento de
+modificação, e a própria ingestão lê todos os arquivos. Sem filtro, cada ingestão
+disparava a próxima. Por isso o watcher guarda tamanho e `mtime` de cada arquivo
+e ignora eventos de modificação que não mudaram nenhum dos dois. Criação,
+remoção e renomeação sempre contam.
+
 ### Limitações conhecidas e trabalho futuro (Linux)
 
 O watcher foi desenvolvido e validado no **Windows**. Em Linux o watchdog usa
