@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 NOME_MODELO = "intfloat/multilingual-e5-small"
 DIMENSAO = 384
 
@@ -47,6 +49,27 @@ def embeddar_passagem(chunk: dict) -> list[float]:
     # normalizado para norma 1: permite converter a distância L2 do índice vetorial
     # em similaridade de cosseno com `sim = 1 - distancia**2 / 2` (ver index.py).
     return modelo.encode(texto, normalize_embeddings=True).tolist()
+
+
+# Medido em CPU (4 threads do torch) com 200 chunks reais do livro, ~400 tokens cada:
+# lote 1 = 33,6 s; lotes 4/8/16/32 = 39-43 s; chamada individual = 34,1 s. Com
+# sequências longas o custo é dominado pela atenção, e o padding dentro do lote só
+# acrescenta trabalho — por isso o padrão é 1. Em GPU, ou com chunks curtos, lotes
+# maiores tendem a compensar: ajuste por EMBEDDINGS_TAMANHO_LOTE.
+TAMANHO_LOTE_PADRAO = 1
+
+
+def embeddar_passagens(chunks: list[dict], tamanho_lote: int | None = None) -> list[list[float]]:
+    """Embeddings de vários chunks numa única chamada ao modelo (`encode` com lista),
+    que distribui os textos em lotes de `tamanho_lote`."""
+    if not chunks:
+        return []
+    if tamanho_lote is None:
+        tamanho_lote = int(os.environ.get("EMBEDDINGS_TAMANHO_LOTE", TAMANHO_LOTE_PADRAO))
+    modelo = obter_modelo()
+    textos = [preparar_passagem(texto_para_embeddar(chunk)) for chunk in chunks]
+    vetores = modelo.encode(textos, batch_size=tamanho_lote, normalize_embeddings=True)
+    return [vetor.tolist() for vetor in vetores]
 
 
 def embeddar_consulta(consulta: str) -> list[float]:

@@ -165,8 +165,10 @@ def executar_ingestao(
 
     embeddings = None
     if not sem_embeddings and todos_chunks:
-        calcular = embeddar_passagem_fn or embed.embeddar_passagem
-        embeddings = [calcular(c) for c in todos_chunks]
+        if embeddar_passagem_fn is not None:
+            embeddings = [embeddar_passagem_fn(c) for c in todos_chunks]
+        else:
+            embeddings = embed.embeddar_passagens(todos_chunks)
 
     conexao = index.criar_indice(caminho_indice)
     index.reindexar(conexao, todos_chunks, embeddings=embeddings, nome_modelo=nome_modelo)
