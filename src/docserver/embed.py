@@ -11,7 +11,12 @@ _modelo_cache = None
 def _carregar_modelo():
     from sentence_transformers import SentenceTransformer
 
-    return SentenceTransformer(NOME_MODELO)
+    # com o modelo já em cache, não consultar o Hugging Face Hub: a checagem de rede
+    # soma segundos (ou trava sem rede) ao startup do servidor.
+    try:
+        return SentenceTransformer(NOME_MODELO, local_files_only=True)
+    except Exception:
+        return SentenceTransformer(NOME_MODELO)
 
 
 def obter_modelo():

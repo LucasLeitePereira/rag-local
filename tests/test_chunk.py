@@ -66,7 +66,22 @@ def test_caminho_origem_aponta_para_o_arquivo_original_nao_para_o_normalizado(co
     chunks = chunk.chunkar_arquivo(com_cabecalhos_md, contar_tokens_fn=_contar_tokens_falso)
 
     assert all(c["caminho_origem"] == "docs-fonte/manual.md" for c in chunks)
-    assert all(c["caminho_normalizado"] == str(com_cabecalhos_md) for c in chunks)
+    assert all(c["caminho_normalizado"] == "manual.md" for c in chunks)
+
+
+def test_caminho_normalizado_e_gravado_relativo_a_base_em_formato_posix(tmp_path):
+    base = tmp_path / "docs-normalizado"
+    arquivo = base / "api" / "contratos.md"
+    arquivo.parent.mkdir(parents=True)
+    arquivo.write_text(
+        "---\norigem: docs-fonte/api/contratos.md\n---\n\n# Contratos\n\n## Seção\n\nTexto suficiente para virar chunk.\n",
+        encoding="utf-8",
+    )
+
+    chunks = chunk.chunkar_arquivo(arquivo, base, contar_tokens_fn=_contar_tokens_falso)
+
+    assert chunks
+    assert all(c["caminho_normalizado"] == "api/contratos.md" for c in chunks)
 
 
 def test_nenhum_chunk_ultrapassa_max_tokens_mesmo_com_paragrafo_unico_gigante(criar_normalizado):

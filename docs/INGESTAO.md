@@ -25,9 +25,41 @@ busca sobre um documento misturar trechos de outro completamente diferente.
 Flags úteis:
 
 ```bash
-docserver ingest --limpar           # apaga docs-normalizado/ e o índice antes de reingerir
+docserver ingest --limpar           # remove os .md gerados pelo docserver e esvazia o índice antes de reingerir
 docserver ingest --sem-embeddings   # pula a camada vetorial — ingestão bem mais rápida em dev
+docserver ingest --forcar           # permite esvaziar o índice (ver "Proteções contra perda de dados")
 ```
+
+### Nomes dos arquivos normalizados
+
+Um `.md` de origem mantém o nome; qualquer outro formato ganha `.md` **depois**
+da extensão original: `docs-fonte/api/contratos.md` → `docs-normalizado/api/contratos.md`,
+`docs-fonte/manual.pdf` → `docs-normalizado/manual.pdf.md`. Assim `manual.pdf`,
+`manual.docx` e `manual.md` na mesma pasta viram três documentos distintos, em
+vez de um sobrescrever o outro.
+
+O índice guarda o caminho normalizado **relativo a `docs-normalizado/`** e em
+formato POSIX (`api/contratos.md`), então ingestão e servidor podem rodar de
+diretórios — ou sistemas operacionais — diferentes.
+
+> Índices criados antes dessa mudança guardavam outro formato de caminho e
+> outros nomes de arquivo: rode `docserver ingest` uma vez após atualizar. Os
+> `.md` antigos gerados pelo docserver são removidos automaticamente como órfãos.
+
+### Proteções contra perda de dados
+
+A ingestão aborta **sem alterar nada** (código de saída 1, mensagem em stderr) quando:
+
+- `--docs-fonte` não existe — erro de digitação ou comando rodado do diretório
+  errado. Essa checagem roda antes do `--limpar` e não é contornável.
+- não há nenhum arquivo em formato suportado em `--docs-fonte`;
+- a ingestão não gerou nenhum chunk e o índice atual tem conteúdo.
+
+Nos dois últimos casos, `--forcar` confirma que a intenção é mesmo esvaziar o índice.
+
+A remoção de órfãos e o `--limpar` só apagam `.md` gerados pelo docserver
+(front matter com `origem:`). Qualquer outro `.md` em `docs-normalizado/` é
+mantido e listado como "Preservados" no relatório.
 
 ## Formatos suportados
 
@@ -61,7 +93,7 @@ Suspeitos (provável PDF escaneado, sem texto extraível):
   ? docs-fonte/legado/fluxo-2019.pdf
 
 Removidos (fonte original não existe mais):
-  - docs-normalizado/legado/contrato-antigo.md
+  - docs-normalizado/legado/contrato-antigo.pdf.md
 ```
 
 - **Ignorados** — extensão sem extrator registrado. Converta o arquivo para
@@ -76,6 +108,11 @@ Removidos (fonte original não existe mais):
   fonte em `docs-fonte/` não existe mais (foi apagada, renomeada, ou passou a
   falhar na extração). O arquivo é apagado de `docs-normalizado/` e sai do
   índice na mesma ingestão.
+- **Preservados** — `.md` em `docs-normalizado/` que não foi gerado pelo
+  docserver. Não é indexado nem apagado.
+- **Falhas** também inclui colisões: dois arquivos de origem que cairiam no
+  mesmo `.md` normalizado (ex.: `Guia.md` e `guia.md` num sistema de arquivos
+  que ignora maiúsculas). O segundo não é gravado.
 
 ## Quando a extração sai ruim
 

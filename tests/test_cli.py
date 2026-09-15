@@ -1,4 +1,133 @@
+import pytest
+
 from docserver import cli
+
+
+def _ingerir_um_documento(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Instalação\n\nRode o comando de setup para instalar o sistema.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+    return docs_fonte, docs_normalizado, caminho_indice
+
+
+def test_ingestao_com_docs_fonte_inexistente_aborta_sem_apagar_nada(tmp_path):
+    _, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+
+    with pytest.raises(cli.ErroIngestao):
+        cli.executar_ingestao(tmp_path / "docs-fnote", docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert (docs_normalizado / "guia.md").exists()
+    assert cli.executar_stats(caminho_indice)["chunks"] == 1
+
+
+def test_ingestao_com_fonte_sem_arquivos_suportados_aborta_a_menos_que_forcar(tmp_path):
+    docs_fonte, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+    (docs_fonte / "guia.md").unlink()
+
+    with pytest.raises(cli.ErroIngestao):
+        cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+    assert (docs_normalizado / "guia.md").exists()
+    assert cli.executar_stats(caminho_indice)["chunks"] == 1
+
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True, forcar=True)
+    assert not (docs_normalizado / "guia.md").exists()
+    assert cli.executar_stats(caminho_indice)["chunks"] == 0
+
+
+def test_ingestao_que_nao_gera_chunks_nao_esvazia_indice_com_conteudo(tmp_path):
+    docs_fonte, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+    (docs_fonte / "guia.md").write_text("curto", encoding="utf-8")  # abaixo do mínimo de um chunk
+
+    with pytest.raises(cli.ErroIngestao):
+        cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert cli.executar_stats(caminho_indice)["chunks"] == 1
+
+
+def test_limpeza_de_orfaos_preserva_md_que_nao_foi_gerado_pelo_docserver(tmp_path):
+    docs_fonte, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+    alheio = docs_normalizado / "anotacoes-pessoais.md"
+    alheio.write_text("# Minhas anotações\n\nNão apague.\n", encoding="utf-8")
+
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert alheio.exists()
+    assert relatorio["preservados"] == [str(alheio)]
+    assert relatorio["removidos"] == []
+
+
+def test_comando_ingest_com_fonte_inexistente_e_limpar_sai_com_erro_sem_apagar(tmp_path, monkeypatch, capsys):
+    _, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+
+    with pytest.raises(SystemExit) as saida:
+        cli.main(
+            [
+                "--docs-fonte",
+                str(tmp_path / "nao-existe"),
+                "--docs-normalizado",
+                str(docs_normalizado),
+                "--indice",
+                caminho_indice,
+                "ingest",
+                "--limpar",
+            ]
+        )
+
+    assert saida.value.code == 1
+    assert "abortada" in capsys.readouterr().err.lower()
+    assert (docs_normalizado / "guia.md").exists()
+    assert cli.executar_stats(caminho_indice)["chunks"] == 1
+
+
+def test_comando_ingest_limpar_so_remove_arquivos_gerados_pelo_docserver(tmp_path):
+    docs_fonte, docs_normalizado, caminho_indice = _ingerir_um_documento(tmp_path)
+    alheio = docs_normalizado / "anotacoes-pessoais.md"
+    alheio.write_text("# Minhas anotações\n\nNão apague.\n", encoding="utf-8")
+
+    cli.main(
+        [
+            "--docs-fonte",
+            str(docs_fonte),
+            "--docs-normalizado",
+            str(docs_normalizado),
+            "--indice",
+            caminho_indice,
+            "ingest",
+            "--limpar",
+            "--sem-embeddings",
+        ]
+    )
+
+    assert alheio.exists()
+    assert (docs_normalizado / "guia.md").exists()
+    assert cli.executar_stats(caminho_indice)["chunks"] == 1
+
+
+def test_fontes_com_mesmo_nome_e_extensoes_diferentes_nao_colidem(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    (docs_fonte / "manual.md").write_text(
+        "# Manual MD\n\nConteúdo exclusivo da versão markdown do manual.\n", encoding="utf-8"
+    )
+    (docs_fonte / "manual.txt").write_text(
+        "# Manual TXT\n\nConteúdo exclusivo da versão em texto puro do manual.\n", encoding="utf-8"
+    )
+    (docs_fonte / "manual.csv").write_text("coluna,valor\nversao,planilha\n", encoding="utf-8")
+    caminho_indice = str(tmp_path / "indice.db")
+
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert relatorio["processados"] == 3
+    assert relatorio["falhas"] == []
+    assert sorted(p.name for p in docs_normalizado.iterdir()) == ["manual.csv.md", "manual.md", "manual.txt.md"]
+    assert cli.executar_stats(caminho_indice)["documentos"] == 3
 
 
 def _embeddar_falso(chunk):
@@ -50,11 +179,12 @@ def test_ingestao_ignora_arquivos_ocultos_e_temporarios_do_office(tmp_path):
     docs_normalizado.mkdir()
     (docs_fonte / ".oculto.md").write_text("# Oculto\n\nConteúdo.\n", encoding="utf-8")
     (docs_fonte / "~$rascunho.docx").write_text("temporário do office", encoding="utf-8")
+    (docs_fonte / "visivel.md").write_text("# Visível\n\nConteúdo com texto suficiente.\n", encoding="utf-8")
     caminho_indice = str(tmp_path / "indice.db")
 
     relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
 
-    assert relatorio["processados"] == 0
+    assert relatorio["processados"] == 1
     assert relatorio["ignorados"] == []
 
 
@@ -241,6 +371,10 @@ def test_ingestao_remove_normalizado_orfao_quando_fonte_e_apagada(tmp_path):
     origem = docs_fonte / "temporario.md"
     origem.write_text(
         "# Temporário\n\n## Seção\n\nConteúdo qualquer com texto suficiente para não ser descartado.\n",
+        encoding="utf-8",
+    )
+    (docs_fonte / "permanente.md").write_text(
+        "# Permanente\n\n## Seção\n\nDocumento que continua na fonte depois da remoção.\n",
         encoding="utf-8",
     )
     caminho_indice = str(tmp_path / "indice.db")

@@ -205,6 +205,71 @@ def test_acerto_lexico_em_apenas_um_termo_raro_nao_e_descartado_pelo_corte_de_re
     assert any("paginação" in r["texto"] for r in resultados)
 
 
+def test_chunk_que_so_casa_um_termo_comum_da_consulta_e_descartado():
+    # regressão C3: a query FTS usa OR, então "rate limit da API" trazia qualquer
+    # chunk que só mencionasse "API" — o termo mais comum do corpus.
+    conexao = conn()
+    chunks = [
+        _chunk(ordem=0, texto="O rate limit da API é de 100 requisições por minuto por cliente."),
+        *[
+            _chunk(ordem=i, texto=f"Capítulo {i}: a API REST serializa os dados em JSON para o consumidor.")
+            for i in range(1, 9)
+        ],
+    ]
+    embeddings = [[0.0, 1.0, 0.0]] * len(chunks)  # vetorial não salva ninguém
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "rate limit da API",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert [r["ordem"] for r in resultados] == [0]
+
+
+def test_chunk_nas_duas_listas_com_cobertura_baixa_mas_similaridade_alta_e_mantido():
+    # regressão: a fusão mantinha o dicionário da lista léxica (sem similaridade),
+    # então "rate limit da API" descartava a seção em português "Limites de
+    # requisição" — que só casa "API" lexicalmente, mas é a mais similar no vetorial.
+    conexao = conn()
+    chunks = [
+        _chunk(ordem=0, texto="O cliente pode fazer até 100 requisições por minuto por chave de API."),
+        _chunk(ordem=1, texto="O rate limit do serializador de objetos limita o aninhamento."),
+        *[_chunk(ordem=i, texto=f"Capítulo {i}: a API REST serializa dados em JSON.") for i in range(2, 9)],
+    ]
+    embeddings = [[1.0, 0.0, 0.0]] + [[0.0, 1.0, 0.0]] * (len(chunks) - 1)
+    index.indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo="fake")
+
+    resultados = index.buscar_hibrido(
+        conexao,
+        "rate limit da API",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0, 0.0]),
+        nome_modelo="fake",
+        dimensao=3,
+    )
+
+    assert 0 in [r["ordem"] for r in resultados]
+
+
+def test_corte_por_cobertura_tambem_vale_sem_indice_vetorial():
+    conexao = conn()
+    chunks = [
+        _chunk(ordem=0, texto="O rate limit da API é de 100 requisições por minuto por cliente."),
+        *[
+            _chunk(ordem=i, texto=f"Capítulo {i}: a API REST serializa os dados em JSON para o consumidor.")
+            for i in range(1, 9)
+        ],
+    ]
+    index.indexar_chunks(conexao, chunks)
+
+    resultados = index.buscar_hibrido(conexao, "rate limit da API")
+
+    assert [r["ordem"] for r in resultados] == [0]
+
+
 def test_modelo_divergente_gera_erro_explicito_na_abertura_do_indice():
     conexao = conn()
     chunks = [_chunk(texto="Conteúdo qualquer para indexar com o modelo A.")]

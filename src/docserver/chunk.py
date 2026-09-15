@@ -194,9 +194,18 @@ def _blocos_por_tamanho(
     return blocos
 
 
-def chunkar_arquivo(caminho_normalizado: Path, contar_tokens_fn=None) -> list[dict]:
-    """Lê um arquivo Markdown normalizado e devolve a lista de chunks para indexação."""
+def chunkar_arquivo(
+    caminho_normalizado: Path, docs_normalizado: Path | None = None, contar_tokens_fn=None
+) -> list[dict]:
+    """Lê um arquivo Markdown normalizado e devolve a lista de chunks para indexação.
+
+    `caminho_normalizado` vai para o índice relativo a `docs_normalizado` e em formato
+    POSIX (`api/contratos.md`): gravar o caminho como veio (relativo ao cwd da
+    ingestão, com `\\` no Windows) impedia o servidor — que roda de outro diretório,
+    ou outro SO — de achar o arquivo."""
     conteudo = caminho_normalizado.read_text(encoding="utf-8")
+    base = docs_normalizado if docs_normalizado is not None else caminho_normalizado.parent
+    caminho_indexado = caminho_normalizado.resolve().relative_to(Path(base).resolve()).as_posix()
     meta, corpo = ler_front_matter(conteudo)
     caminho_origem = meta.get("origem", "")
     titulo_doc = _titulo_documento(corpo)
@@ -218,7 +227,7 @@ def chunkar_arquivo(caminho_normalizado: Path, contar_tokens_fn=None) -> list[di
             chunks.append(
                 {
                     "caminho_origem": caminho_origem,
-                    "caminho_normalizado": str(caminho_normalizado),
+                    "caminho_normalizado": caminho_indexado,
                     "titulo_doc": titulo_doc,
                     "secao": nome_secao,
                     "texto": bloco,

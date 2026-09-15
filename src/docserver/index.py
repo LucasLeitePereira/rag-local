@@ -4,6 +4,7 @@ com fusão híbrida por Reciprocal Rank Fusion (RRF)."""
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -35,9 +36,19 @@ CREATE TABLE IF NOT EXISTS metadados_indice (
 
 _CAMPOS = ["caminho_origem", "caminho_normalizado", "titulo_doc", "secao", "texto", "ordem"]
 
+_CAMPOS_TEXTO = ["caminho_origem", "caminho_normalizado", "titulo_doc", "secao", "texto"]
+
 _TOKEN = re.compile(r"\w+", re.UNICODE)
+_TOKEN_FTS = re.compile(r"[^\W_]+", re.UNICODE)
 
 K_RRF_PADRAO = 60
+
+# Fração mínima (0-1) do peso IDF dos termos da consulta que um resultado precisa
+# cobrir para entrar na busca híbrida só pelo lado léxico (ver `_relevante`). Com
+# 0.5, "rate limit da API" num corpus onde "API" é comum descarta chunks que só têm
+# "API" (~20% do peso), mas aceita um único termo raro quando os demais nem existem
+# no corpus. Ajustável via env sem reindexar.
+COBERTURA_LEXICA_MINIMA_PADRAO = 0.5
 
 # Similaridade de cosseno mínima (0-1) para um resultado vetorial ser considerado
 # relevante o bastante para aparecer sozinho na busca híbrida. Calibrada empiricamente
@@ -68,12 +79,38 @@ class ErroModeloDivergente(Exception):
     """O índice vetorial foi construído com um modelo/dimensão diferente do atual."""
 
 
-def criar_indice(caminho: str) -> sqlite3.Connection:
-    """Abre (ou cria) o banco de índice em `caminho` (use ':memory:' para testes)."""
-    conexao = sqlite3.connect(caminho)
+def criar_indice(caminho: str, compartilhada: bool = False) -> sqlite3.Connection:
+    """Abre (ou cria) o banco de índice em `caminho` (use ':memory:' para testes).
+
+    `compartilhada=True` libera o uso da conexão a partir de outras threads — o
+    servidor mantém uma única conexão por processo e serializa o acesso com um lock."""
+    conexao = sqlite3.connect(caminho, check_same_thread=not compartilhada)
     conexao.execute(_ESQUEMA)
     conexao.commit()
     return conexao
+
+
+def contar_chunks(caminho: str) -> int:
+    """Quantos chunks o índice em `caminho` tem hoje (0 se o arquivo nem existe)."""
+    if caminho != ":memory:" and not Path(caminho).exists():
+        return 0
+    conexao = criar_indice(caminho)
+    try:
+        return conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    finally:
+        conexao.close()
+
+
+def limpar_indice(conexao: sqlite3.Connection) -> None:
+    """Esvazia o índice por dentro (DROP das tabelas) em vez de apagar o arquivo: no
+    Windows o arquivo não pode ser removido enquanto o servidor o mantém aberto."""
+    if _tabela_vetorial_existe(conexao):
+        _carregar_extensao_vec(conexao)
+        conexao.execute("DROP TABLE chunks_vec")
+    conexao.execute("DROP TABLE IF EXISTS metadados_indice")
+    conexao.execute("DROP TABLE IF EXISTS chunks")
+    conexao.execute(_ESQUEMA)
+    conexao.commit()
 
 
 def _carregar_extensao_vec(conexao: sqlite3.Connection) -> None:
@@ -195,25 +232,37 @@ def _query_fts(consulta: str) -> str:
     return " OR ".join('"' + termo.replace('"', '""') + '"' for termo in termos)
 
 
-def resolver_origem(conexao: sqlite3.Connection, documento: str) -> list[str]:
-    """Resolve um caminho parcial (ou só o nome do arquivo) para os `caminho_origem`
-    do índice que ele identifica — casamento exato, por sufixo de caminho, pelo nome
-    do arquivo ou pelo nome sem extensão. Pode devolver mais de um candidato."""
-    alvo = documento.strip()
-    if alvo.startswith("docs-fonte/"):
-        alvo = alvo[len("docs-fonte/") :]
-    elif alvo.startswith("docs-normalizado/"):
-        alvo = alvo[len("docs-normalizado/") :]
+def _sem_prefixo(caminho: str, prefixo: str) -> str:
+    return caminho[len(prefixo) :] if caminho.startswith(prefixo) else caminho
 
-    origens = [linha[0] for linha in conexao.execute("SELECT DISTINCT caminho_origem FROM chunks")]
+
+def _casa_caminho(relativo: str, alvo: str) -> bool:
+    nome = relativo.rsplit("/", 1)[-1]
+    return relativo == alvo or relativo.endswith("/" + alvo) or nome == alvo or Path(nome).stem == alvo
+
+
+def resolver_documento(conexao: sqlite3.Connection, documento: str) -> list[tuple[str, str]]:
+    """Resolve um caminho (completo, parcial ou só o nome do arquivo, de origem ou
+    normalizado) para os pares `(caminho_origem, caminho_normalizado)` do índice que
+    ele identifica — casamento exato, por sufixo de caminho, pelo nome do arquivo ou
+    pelo nome sem extensão. Pode devolver mais de um candidato."""
+    alvo = documento.strip().replace("\\", "/")
+    alvo = _sem_prefixo(_sem_prefixo(alvo, "./"), "docs-fonte/")
+    alvo = _sem_prefixo(alvo, "docs-normalizado/")
+
+    pares = conexao.execute(
+        "SELECT DISTINCT caminho_origem, caminho_normalizado FROM chunks ORDER BY caminho_origem"
+    ).fetchall()
     candidatos = []
-    for origem in origens:
-        relativo = origem[len("docs-fonte/") :] if origem.startswith("docs-fonte/") else origem
-        nome = Path(relativo).name
-        raiz = Path(relativo).stem
-        if relativo == alvo or relativo.endswith("/" + alvo) or nome == alvo or raiz == alvo:
-            candidatos.append(origem)
+    for origem, normalizado in pares:
+        if _casa_caminho(_sem_prefixo(origem, "docs-fonte/"), alvo) or _casa_caminho(normalizado, alvo):
+            candidatos.append((origem, normalizado))
     return candidatos
+
+
+def resolver_origem(conexao: sqlite3.Connection, documento: str) -> list[str]:
+    """Como `resolver_documento`, mas devolve só os `caminho_origem`."""
+    return [origem for origem, _ in resolver_documento(conexao, documento)]
 
 
 def buscar(conexao: sqlite3.Connection, consulta: str, limite: int = 5, origem: str | None = None) -> list[dict]:
@@ -321,13 +370,55 @@ def _distancia_para_similaridade(distancia: float) -> float:
     return 1.0 - (distancia**2) / 2.0
 
 
-def _relevante(item: dict, ids_lexicos: set, similaridade_minima: float) -> bool:
-    """Um resultado é relevante se casou de fato na busca léxica (BM25 já validou que
-    pelo menos um termo relevante da consulta aparece nele — recalcular uma cobertura
-    fracionária à parte é mais rígido que o próprio MATCH que gerou a lista e descarta
-    acertos legítimos de um único termo raro, ex.: "paginação" sem "endpoints"), ou se a
-    similaridade vetorial é alta o bastante para sustentar sozinha."""
-    if item["id"] in ids_lexicos:
+def _tokens_fts(texto: str) -> set[str]:
+    """Tokens como o `unicode61 remove_diacritics` do FTS5 os vê: sequências de letras
+    e dígitos (sublinhado separa), minúsculas e sem acento."""
+    return set(_TOKEN_FTS.findall(_sem_acentos(texto)))
+
+
+def _pesos_idf(conexao: sqlite3.Connection, termos: list[str], origem: str | None) -> dict[str, float]:
+    """IDF (fórmula do BM25) de cada termo útil, no mesmo escopo da busca. Termos que
+    não aparecem em nenhum chunk do escopo ficam de fora: nenhum resultado poderia
+    cobri-los, então não devem pesar contra quem cobre os demais."""
+    filtro, parametros_origem = (" AND caminho_origem = ?", [origem]) if origem else ("", [])
+    total = conexao.execute(
+        f"SELECT COUNT(*) FROM chunks WHERE 1=1{filtro}", parametros_origem
+    ).fetchone()[0]
+    pesos: dict[str, float] = {}
+    for termo in dict.fromkeys(termos):
+        frequencia = conexao.execute(
+            f"SELECT COUNT(*) FROM chunks WHERE chunks MATCH ?{filtro}",
+            ['"' + termo.replace('"', '""') + '"', *parametros_origem],
+        ).fetchone()[0]
+        if frequencia:
+            pesos[termo] = math.log((total - frequencia + 0.5) / (frequencia + 0.5) + 1)
+    return pesos
+
+
+def _cobertura_lexica(item: dict, pesos: dict[str, float]) -> float:
+    """Fração (0-1) do peso IDF da consulta coberta pelos termos presentes no chunk."""
+    total = sum(pesos.values())
+    if not total:
+        return 0.0
+    presentes = _tokens_fts(" ".join(str(item.get(campo) or "") for campo in _CAMPOS_TEXTO))
+    coberto = sum(
+        peso for termo, peso in pesos.items() if _tokens_fts(termo) <= presentes
+    )
+    return coberto / total
+
+
+def _relevante(
+    item: dict, ids_lexicos: set, pesos: dict[str, float], cobertura_minima: float, similaridade_minima: float
+) -> bool:
+    """Um resultado é relevante se cobre boa parte do peso IDF da consulta, ou se a
+    similaridade vetorial é alta o bastante para sustentar sozinha.
+
+    Só ter aparecido na lista léxica não basta: a query FTS usa OR, então qualquer
+    chunk com um único termo comum ("API", "dados") entrava — em corpus grande isso
+    contamina quase toda consulta. Contar termos sem peso também falha no sentido
+    oposto (descarta "paginação" sem "endpoints"): ponderar por IDF faz um termo raro
+    valer mais que vários comuns, e termos ausentes do corpus não contam."""
+    if item["id"] in ids_lexicos and _cobertura_lexica(item, pesos) >= cobertura_minima:
         return True
     similaridade = item.get("similaridade")
     return similaridade is not None and similaridade >= similaridade_minima
@@ -345,17 +436,28 @@ def buscar_hibrido(
 ) -> list[dict]:
     peso_lexico = float(os.environ.get("PESO_LEXICO", 1.0))
     peso_vetorial = float(os.environ.get("PESO_VETORIAL", 1.0))
+    cobertura_minima = float(os.environ.get("COBERTURA_LEXICA_MINIMA", COBERTURA_LEXICA_MINIMA_PADRAO))
+    similaridade_minima = float(os.environ.get("SIMILARIDADE_MINIMA", SIMILARIDADE_MINIMA_PADRAO))
 
     lexico = buscar(conexao, consulta, limite=20, origem=origem)
+    ids_lexicos = {item["id"] for item in lexico}
+    pesos = _pesos_idf(conexao, _termos_uteis(consulta), origem) if lexico else {}
+
+    def _filtrar(itens: list[dict]) -> list[dict]:
+        return [
+            item
+            for item in itens
+            if _relevante(item, ids_lexicos, pesos, cobertura_minima, similaridade_minima)
+        ]
 
     if not _tabela_vetorial_existe(conexao):
         logger.warning(
             "índice vetorial ausente — busca híbrida caindo para busca léxica (BM25) pura"
         )
-        return lexico[:limite]
+        return _filtrar(lexico)[:limite]
 
     if peso_vetorial == 0:
-        return lexico[:limite]
+        return _filtrar(lexico)[:limite]
 
     vetorial = buscar_vetorial(
         conexao,
@@ -366,12 +468,15 @@ def buscar_hibrido(
         dimensao=dimensao,
         origem=origem,
     )
+    similaridades = {item["id"]: _distancia_para_similaridade(item["distancia"]) for item in vetorial}
     for item in vetorial:
-        item["similaridade"] = _distancia_para_similaridade(item["distancia"])
+        item["similaridade"] = similaridades[item["id"]]
 
     fundido = fundir_rrf(lexico, vetorial, peso_lexico=peso_lexico, peso_vetorial=peso_vetorial, k=k_rrf)
-
-    similaridade_minima = float(os.environ.get("SIMILARIDADE_MINIMA", SIMILARIDADE_MINIMA_PADRAO))
-    ids_lexicos = {item["id"] for item in lexico}
-    fundido = [item for item in fundido if _relevante(item, ids_lexicos, similaridade_minima)]
-    return fundido[:limite]
+    # um item presente nas duas listas chega da fusão com o dicionário da lista
+    # léxica, que não tem similaridade — sem repor aqui, um chunk com cobertura
+    # léxica baixa mas similaridade alta seria descartado pelo corte.
+    for item in fundido:
+        if item["id"] in similaridades:
+            item["similaridade"] = similaridades[item["id"]]
+    return _filtrar(fundido)[:limite]

@@ -28,9 +28,29 @@ pergunta, ou de um documento diferente do que se esperava:
    apagado da fonte mas ainda indexado — que originalmente causava esse tipo
    de mistura.
 3. Se mesmo assim um resultado claramente irrelevante aparecer, é o corte de
-   relevância (`SIMILARIDADE_MINIMA`, ver `docs/ARQUITETURA.md`) que precisa
-   de ajuste — aumente o valor via variável de ambiente se estiver frouxo
-   demais para o seu corpus.
+   relevância que precisa de ajuste (ver `docs/ARQUITETURA.md`) — aumente
+   `COBERTURA_LEXICA_MINIMA` se o ruído vem de termos comuns da consulta, ou
+   `SIMILARIDADE_MINIMA` se vem da via vetorial. Se, ao contrário, acertos
+   legítimos somem, reduza-os.
+
+## `docserver ingest` abortou ("Ingestão abortada: ...")
+
+A ingestão se recusa a apagar dados por engano e, nesses casos, não altera
+nem `docs-normalizado/` nem o índice (ver "Proteções contra perda de dados"
+em `docs/INGESTAO.md`):
+
+- **"pasta de documentos de origem não encontrada"** — confira o
+  `--docs-fonte` e o diretório de onde o comando foi executado.
+- **"nenhum arquivo em formato suportado"** ou **"não gerou nenhum chunk"** —
+  se a intenção é mesmo esvaziar o índice, repita com `--forcar`.
+
+## `ler_documento` responde "Documento não encontrado" para tudo
+
+Índices criados antes da versão que passou a gravar o caminho normalizado
+relativo (`api/contratos.md`) não são compatíveis: rode `docserver ingest` uma
+vez. Se a mensagem for "está no índice, mas o arquivo normalizado não foi
+encontrado", o `--docs-normalizado` passado ao `serve` não é a pasta usada na
+ingestão.
 
 ## PDF virou texto embaralhado
 

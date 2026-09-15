@@ -156,18 +156,38 @@ def ler_front_matter(conteudo: str) -> tuple[dict[str, str], str]:
     return meta, corpo
 
 
-def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -> Path:
-    """Extrai `caminho_origem` e grava o Markdown normalizado com front matter.
+def gerado_pelo_docserver(caminho: Path) -> bool:
+    """True se `caminho` é um Markdown normalizado escrito por `normalizar` (front
+    matter com `origem:`). Limpezas de docs-normalizado só podem apagar esses — um
+    `.md` qualquer que o usuário tenha deixado na pasta não é nosso para remover."""
+    try:
+        conteudo = caminho.read_text(encoding="utf-8")
+        meta, _ = ler_front_matter(conteudo)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return bool(meta.get("origem"))
 
-    Espelha a estrutura de pastas de docs_fonte dentro de docs_normalizado,
-    trocando a extensão por .md.
-    """
+
+def caminho_normalizado_para(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -> Path:
+    """Destino do Markdown normalizado de `caminho_origem`, espelhando as pastas de
+    docs_fonte. Um `.md` mantém o nome; qualquer outro formato ganha `.md` depois da
+    extensão original (`manual.pdf` → `manual.pdf.md`) — trocar a extensão fazia
+    `manual.pdf` e `manual.docx` gravarem no mesmo arquivo, um sobrescrevendo o outro."""
+    caminho_relativo = caminho_origem.relative_to(docs_fonte)
+    if caminho_origem.suffix.lower() == ".md":
+        return docs_normalizado / caminho_relativo
+    return docs_normalizado / caminho_relativo.with_name(caminho_relativo.name + ".md")
+
+
+def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -> Path:
+    """Extrai `caminho_origem` e grava o Markdown normalizado com front matter
+    (destino definido por `caminho_normalizado_para`)."""
     texto = extrair_texto(caminho_origem)
     if texto is None:
         raise ValueError(f"formato não suportado: {caminho_origem.suffix}")
 
     caminho_relativo = caminho_origem.relative_to(docs_fonte)
-    caminho_saida = (docs_normalizado / caminho_relativo).with_suffix(".md")
+    caminho_saida = caminho_normalizado_para(caminho_origem, docs_fonte, docs_normalizado)
     caminho_saida.parent.mkdir(parents=True, exist_ok=True)
 
     origem_str = f"docs-fonte/{caminho_relativo.as_posix()}"

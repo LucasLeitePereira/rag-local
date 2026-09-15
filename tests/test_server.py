@@ -1,6 +1,17 @@
 from pathlib import Path
 
-from docserver import cli, server
+import pytest
+
+from docserver import cli, embed, index, server
+
+_aquecer_real = server._aquecer
+
+
+@pytest.fixture(autouse=True)
+def _sem_aquecimento_real(monkeypatch):
+    # `server.main()` sem argumentos aponta para o data/indice.db real do repositório:
+    # sem isto, os testes carregariam o modelo de embeddings de verdade.
+    monkeypatch.setattr(server, "_aquecer", lambda caminho_indice: None)
 
 
 def _preparar_corpus(tmp_path):
@@ -222,8 +233,188 @@ def test_cli_serve_com_flag_http_repassa_host_e_porta_para_o_servidor(tmp_path, 
             "transporte": "http",
             "host": "0.0.0.0",
             "porta": 9001,
+            "aquecer": True,
         }
     ]
+
+
+def test_ler_documento_funciona_quando_ingestao_e_servidor_usam_cwds_e_caminhos_diferentes(tmp_path, monkeypatch):
+    # regressão C1: a ingestão rodava com caminhos relativos ao cwd e o servidor,
+    # com caminhos absolutos — `ler_documento` nunca achava nada no servidor real.
+    projeto = tmp_path / "projeto"
+    (projeto / "docs-fonte" / "api").mkdir(parents=True)
+    (projeto / "docs-fonte" / "api" / "contratos.md").write_text(
+        "# Contratos\n\n## Rate limit\n\nCada cliente pode fazer 100 requisições por minuto.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(projeto)
+    cli.main(["ingest", "--sem-embeddings"])
+
+    outro_dir = tmp_path / "outro-cwd"
+    outro_dir.mkdir()
+    monkeypatch.chdir(outro_dir)
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: None)
+    cli.main(
+        [
+            "--docs-normalizado",
+            str(projeto / "docs-normalizado"),
+            "--indice",
+            str(projeto / "data" / "indice.db"),
+            "serve",
+        ]
+    )
+
+    for caminho in ("docs-fonte/api/contratos.md", "api/contratos.md", "contratos.md", "contratos"):
+        assert "100 requisições por minuto" in server.ler_documento(caminho), caminho
+
+
+def test_indice_grava_caminho_normalizado_relativo_e_posix(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    (docs_fonte / "api").mkdir(parents=True)
+    (docs_fonte / "api" / "contratos.md").write_text(
+        "# Contratos\n\n## Seção\n\nTexto suficiente para virar um chunk indexado.\n", encoding="utf-8"
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    conexao = index.criar_indice(caminho_indice)
+    try:
+        valores = {linha[0] for linha in conexao.execute("SELECT caminho_normalizado FROM chunks")}
+    finally:
+        conexao.close()
+
+    assert valores == {"api/contratos.md"}
+
+
+def test_ler_documento_distingue_fontes_com_mesmo_nome_e_extensoes_diferentes(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    (docs_fonte / "manual.md").write_text(
+        "# Manual MD\n\n## Seção\n\nConteúdo exclusivo da versão em markdown do manual.\n", encoding="utf-8"
+    )
+    (docs_fonte / "manual.txt").write_text(
+        "# Manual TXT\n\n## Seção\n\nConteúdo exclusivo da versão em texto puro do manual.\n", encoding="utf-8"
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    texto_txt = server._ler_documento_texto("manual.txt", docs_normalizado, caminho_indice)
+    texto_md = server._ler_documento_texto("docs-fonte/manual.md", docs_normalizado, caminho_indice)
+    ambiguo = server._ler_documento_texto("manual", docs_normalizado, caminho_indice)
+
+    assert "texto puro" in texto_txt and "markdown" not in texto_txt
+    assert "markdown" in texto_md and "texto puro" not in texto_md
+    assert "ambígu" in ambiguo.lower()
+
+
+def test_buscar_devolve_o_chunk_inteiro_com_metadados(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    frase_final = "E esta é a frase final que fica depois do corte de trezentos caracteres."
+    corpo = " ".join(["O refresh token é renovado automaticamente pelo cliente."] * 10) + " " + frase_final
+    (docs_fonte / "auth.md").write_text(f"# Auth\n\n## Renovação\n\n{corpo}\n", encoding="utf-8")
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    texto = server._buscar_texto(caminho_indice, "refresh token")
+
+    assert len(corpo) > 300
+    assert frase_final in texto
+    assert "chunk " in texto
+    assert "posição 0 no documento" in texto
+
+
+def test_main_aquece_o_modelo_antes_de_aceitar_requisicoes(monkeypatch):
+    eventos = []
+    monkeypatch.setattr(server, "_aquecer", lambda caminho_indice: eventos.append("aquecer"))
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: eventos.append("run"))
+
+    server.main()
+
+    assert eventos == ["aquecer", "run"]
+
+
+def test_main_sem_aquecimento_nao_carrega_modelo(monkeypatch):
+    eventos = []
+    monkeypatch.setattr(server, "_aquecer", lambda caminho_indice: eventos.append("aquecer"))
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: eventos.append("run"))
+
+    server.main(aquecer=False)
+
+    assert eventos == ["run"]
+
+
+def _indice_vetorial(tmp_path):
+    caminho_indice = str(tmp_path / "indice.db")
+    conexao = index.criar_indice(caminho_indice)
+    chunk = {
+        "caminho_origem": "docs-fonte/a.md",
+        "caminho_normalizado": "a.md",
+        "titulo_doc": "A",
+        "secao": "S",
+        "texto": "texto qualquer",
+        "ordem": 0,
+    }
+    index.indexar_chunks(conexao, [chunk], embeddings=[[1.0, 0.0, 0.0]], nome_modelo="fake")
+    conexao.close()
+    return caminho_indice
+
+
+def test_aquecer_com_indice_vetorial_carrega_o_modelo(tmp_path, monkeypatch):
+    caminho_indice = _indice_vetorial(tmp_path)
+    chamadas = []
+    monkeypatch.setattr(embed, "embeddar_consulta", lambda consulta: chamadas.append(consulta))
+
+    _aquecer_real(caminho_indice)
+
+    assert len(chamadas) == 1
+
+
+def test_aquecer_nao_derruba_o_servidor_se_o_modelo_nao_carrega(tmp_path, monkeypatch):
+    caminho_indice = _indice_vetorial(tmp_path)
+
+    def _falhar(consulta):
+        raise ImportError("sentence-transformers não instalado")
+
+    monkeypatch.setattr(embed, "embeddar_consulta", _falhar)
+
+    _aquecer_real(caminho_indice)  # não deve levantar
+
+
+def test_aquecer_sem_indice_vetorial_nao_carrega_modelo(tmp_path, monkeypatch):
+    _, caminho_indice = _preparar_corpus(tmp_path)
+    chamadas = []
+    monkeypatch.setattr(embed, "embeddar_consulta", lambda consulta: chamadas.append(consulta))
+
+    _aquecer_real(caminho_indice)
+
+    assert chamadas == []
+
+
+def test_conexao_persistente_e_reutilizada_enquanto_o_servidor_esta_ativo(tmp_path, monkeypatch):
+    docs_normalizado, caminho_indice = _preparar_corpus(tmp_path)
+    aberturas = []
+    criar_original = index.criar_indice
+
+    def _contar(caminho, compartilhada=False):
+        aberturas.append(caminho)
+        return criar_original(caminho, compartilhada=compartilhada)
+
+    def _servir(**kwargs):
+        monkeypatch.setattr(index, "criar_indice", _contar)
+        server.listar_documentos()
+        server.buscar("refresh token")
+        server.ler_documento("autenticacao.md")
+
+    monkeypatch.setattr(server.mcp, "run", _servir)
+
+    server.main(docs_normalizado=docs_normalizado, indice=caminho_indice, aquecer=False)
+
+    assert len(aberturas) == 1
+    assert server._persistente["conexao"] is None
 
 
 def test_configurar_resolve_caminhos_relativos_para_absolutos(tmp_path, monkeypatch):

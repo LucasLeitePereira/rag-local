@@ -62,24 +62,27 @@ Com dois documentos de vocabulário parecido no mesmo índice (dois PDFs
 institucionais, por exemplo), isso mistura trechos de um documento na
 resposta sobre o outro, sem nenhum sinal de que algo deu errado. Por isso
 `buscar_hibrido` aplica um corte de relevância depois do RRF: um resultado só
-sobrevive se ele apareceu de fato na lista léxica bruta (BM25 já confirmou
-que pelo menos um termo relevante da consulta, sem stopwords, casa no
-chunk — critério suficiente, porque a raridade do termo já pondera o score),
-ou se a similaridade de cosseno (calculada a partir da distância L2 do índice
-vetorial, com os embeddings normalizados) passar de `SIMILARIDADE_MINIMA`
-(variável de ambiente, padrão 0.85). Sem esse corte, uma busca híbrida
+sobrevive se apareceu na lista léxica **e** cobre pelo menos
+`COBERTURA_LEXICA_MINIMA` (variável de ambiente, padrão 0.5) do peso IDF dos
+termos da consulta, ou se a similaridade de cosseno (calculada a partir da
+distância L2 do índice vetorial, com os embeddings normalizados) passar de
+`SIMILARIDADE_MINIMA` (variável de ambiente, padrão 0.85). O mesmo corte vale
+quando não há índice vetorial (fallback BM25). Sem ele, uma busca híbrida
 "bem-sucedida" e uma busca que só achou lixo são indistinguíveis do lado do
 agente.
 
-A primeira versão desse corte recalculava uma "cobertura léxica" própria
-(exigindo que pelo menos metade dos termos da consulta aparecesse no chunk),
-mas isso se mostrou mais rígido que o próprio BM25 que gerou a lista: uma
-consulta como "como funciona a paginação dos endpoints" acerta o chunk certo
-(seção "Paginação") mesmo esse chunk só contendo "paginação" e não
-"endpoints" literalmente — o BM25 já sabe que isso basta, mas a cobertura de
-50% descartava o acerto. Confiar na lista léxica bruta em vez de recalcular
-esse critério resolveu a regressão sem reabrir a porta para ruído puro (uma
-consulta como "receita de bolo" segue sem nenhum match léxico real).
+A cobertura é ponderada por IDF (a mesma fórmula do BM25, calculada no escopo
+da busca), e termos que não aparecem em nenhum chunk saem do denominador. As
+duas versões anteriores falhavam em sentidos opostos:
+
+- **Contar termos sem peso** (≥50% dos termos no chunk) descartava acertos
+  legítimos: "como funciona a paginação dos endpoints" acerta a seção
+  "Paginação", que não contém "endpoints". Com IDF, "endpoints" não existe no
+  corpus e não pesa; "paginação" sozinho cobre 100%.
+- **Aceitar qualquer item da lista léxica** deixava passar ruído, porque a
+  query FTS5 usa `OR`: "rate limit da API" trazia trechos do livro que só
+  mencionam "API". Com IDF, "API" (termo comum) vale uma fração pequena do
+  peso, e um chunk que só tem ele fica bem abaixo de 0.5.
 
 O padrão de 0.85 foi calibrado empiricamente contra o corpus real deste
 projeto (relatório de Niterói + calendário acadêmico + docs de exemplo): o
@@ -150,6 +153,16 @@ depender de uma API externa nem de GPU. Os embeddings são normalizados
 (`sim = 1 - distância²/2`), sem precisar de uma segunda consulta só para
 normalizar depois.
 
+O modelo é carregado **no startup do `docserver serve`**, antes de aceitar
+requisições (`server._aquecer`), e não na primeira busca: o import de torch +
+pesos levava mais de 120 s e segurava na fila as chamadas que chegassem nesse
+meio-tempo — o cliente MCP chegava a desistir da primeira busca. Com o modelo
+em cache local, o carregamento não consulta o Hugging Face Hub. O servidor
+também mantém uma única conexão SQLite por processo (protegida por lock) em vez
+de abrir uma por tool call. `serve --sem-aquecimento` volta ao carregamento
+preguiçoso (startup rápido, primeira busca lenta); uma falha no aquecimento só
+é registrada em stderr e o servidor sobe mesmo assim.
+
 ### Chunks limitados pelo tamanho real de tokens, não por uma estimativa de caracteres
 
 `multilingual-e5-small` trunca silenciosamente qualquer texto acima de 512
@@ -172,7 +185,12 @@ granularidade que a busca por seção depende.
 
 ### `listar_documentos` e `ler_documento` nunca servem o que não está no índice
 
-Ambos leem o índice (`indice.db`), não o disco, para decidir o que existe. Um
+Ambos leem o índice (`indice.db`), não o disco, para decidir o que existe.
+`ler_documento` resolve o caminho pedido (de origem ou normalizado, completo,
+parcial ou só o nome) contra o índice e só então lê
+`<--docs-normalizado>/<caminho_normalizado>` — o índice guarda esse caminho
+relativo e em formato POSIX justamente para funcionar com ingestão e servidor
+em diretórios diferentes. Um
 `.md` que sobrou em `docs-normalizado/` de uma ingestão anterior — porque o
 arquivo original em `docs-fonte/` foi apagado ou renomeado depois — não é
 mais gerado nem listado, mesmo que o arquivo continue fisicamente ali (a
