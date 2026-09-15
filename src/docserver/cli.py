@@ -231,6 +231,7 @@ def executar_busca(
 ) -> list[dict]:
     conexao = index.criar_indice(caminho_indice)
     try:
+        index.exigir_esquema_atual(conexao)
         if modo == "lexico":
             return index.buscar(conexao, consulta, limite, origem=origem)
         if modo == "vetorial":
@@ -496,9 +497,13 @@ def _comando_avaliar(args: argparse.Namespace) -> None:
 
     conexao = index.criar_indice(args.indice)
     try:
+        mensagem_esquema = index.verificar_esquema(conexao)
         tem_vetores = index._tabela_vetorial_existe(conexao)
     finally:
         conexao.close()
+    if mensagem_esquema:
+        print(f"Índice indisponível: {mensagem_esquema}")
+        raise SystemExit(1)
     modos = ("lexico", "vetorial", "hibrido") if tem_vetores else ("lexico", "hibrido")
     if tem_vetores:
         # carrega o modelo antes de medir: senão a 1ª consulta vetorial carrega a
@@ -660,12 +665,16 @@ def _comando_watch(args: argparse.Namespace) -> None:
 
 def _comando_search(args: argparse.Namespace) -> None:
     origem = None
+    conexao = index.criar_indice(args.indice)
+    try:
+        mensagem_esquema = index.verificar_esquema(conexao)
+        candidatos = index.resolver_origem(conexao, args.documento) if args.documento and not mensagem_esquema else []
+    finally:
+        conexao.close()
+    if mensagem_esquema:
+        print(f"Índice indisponível: {mensagem_esquema}")
+        sys.exit(1)
     if args.documento:
-        conexao = index.criar_indice(args.indice)
-        try:
-            candidatos = index.resolver_origem(conexao, args.documento)
-        finally:
-            conexao.close()
         if not candidatos:
             print(f"Documento não encontrado: {args.documento}. Use 'docserver stats' ou verifique o índice.")
             return

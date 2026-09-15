@@ -175,6 +175,88 @@ def test_resolver_origem_por_nome_de_arquivo_sem_caminho(conn):
     assert candidatos == ["docs-fonte/arquitetura/visao-geral.md"]
 
 
+def test_palavras_do_caminho_nao_casam_a_busca(conn):
+    index.indexar_chunks(
+        conn,
+        [
+            _chunk(
+                caminho_origem="docs-fonte/api/contratos.md",
+                caminho_normalizado="api/contratos.md",
+                texto="Limites de requisição por minuto.",
+            )
+        ],
+    )
+
+    assert index.buscar(conn, "api") == []
+    assert index.buscar(conn, "contratos") == []
+    assert len(index.buscar(conn, "requisição", origem="docs-fonte/api/contratos.md")) == 1
+
+
+def test_termo_na_secao_pesa_mais_que_no_texto(conn):
+    index.indexar_chunks(
+        conn,
+        [
+            _chunk(ordem=0, secao="Introdução", texto="Aqui se fala de faturamento de passagem, entre outros temas."),
+            _chunk(ordem=1, secao="Faturamento", texto="Detalhes do processo mensal, entre outros temas."),
+        ],
+    )
+
+    assert index.buscar(conn, "faturamento")[0]["ordem"] == 1
+
+
+def test_pesos_bm25_configuraveis_por_env(conn, monkeypatch):
+    index.indexar_chunks(
+        conn,
+        [
+            _chunk(ordem=0, secao="Introdução", texto="Aqui se fala de faturamento de passagem, entre outros temas."),
+            _chunk(ordem=1, secao="Faturamento", texto="Detalhes do processo mensal, entre outros temas."),
+        ],
+    )
+    monkeypatch.setenv("PESOS_BM25", "secao=0,texto=1")
+
+    assert index.buscar(conn, "faturamento")[0]["ordem"] == 0
+
+
+def _criar_indice_v1(caminho):
+    import sqlite3
+
+    conexao = sqlite3.connect(caminho)
+    conexao.execute(
+        "CREATE VIRTUAL TABLE chunks USING fts5(caminho_origem, caminho_normalizado, titulo_doc, "
+        'secao, texto, ordem UNINDEXED, tokenize = "unicode61 remove_diacritics 2")'
+    )
+    conexao.execute(
+        "INSERT INTO chunks VALUES ('docs-fonte/velho.md', 'velho.md', 'Velho', 'S', 'conteúdo antigo', 0)"
+    )
+    conexao.commit()
+    conexao.close()
+
+
+def test_indice_novo_grava_a_versao_atual_do_esquema(conn):
+    assert index.versao_esquema(conn) == index.VERSAO_ESQUEMA
+    assert index.verificar_esquema(conn) is None
+
+
+def test_indice_sem_versao_e_reconhecido_como_antigo_e_reindexar_o_recria(tmp_path):
+    caminho = str(tmp_path / "indice.db")
+    _criar_indice_v1(caminho)
+
+    conexao = index.criar_indice(caminho)
+    try:
+        assert index.versao_esquema(conexao) == 1
+        assert "docserver ingest" in index.verificar_esquema(conexao)
+        with pytest.raises(index.ErroEsquemaAntigo):
+            index.exigir_esquema_atual(conexao)
+
+        index.reindexar(conexao, [_chunk(texto="Conteúdo novo sobre faturamento.")])
+
+        assert index.verificar_esquema(conexao) is None
+        assert [r["texto"] for r in index.buscar(conexao, "faturamento")] == ["Conteúdo novo sobre faturamento."]
+        assert index.buscar(conexao, "antigo") == []
+    finally:
+        conexao.close()
+
+
 def test_resolver_origem_documento_inexistente_nao_encontra_nada(conn):
     index.indexar_chunks(conn, [_chunk(caminho_origem="docs-fonte/a.md")])
 

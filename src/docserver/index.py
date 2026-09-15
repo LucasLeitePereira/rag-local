@@ -15,10 +15,20 @@ from docserver import embed
 
 logger = logging.getLogger(__name__)
 
+# Versão do formato do índice, gravada em `metadados_indice`. Mudou o esquema (colunas,
+# tabelas, o que vai em cada uma)? Incremente: a próxima ingestão reconstrói o índice
+# sozinha, e o servidor avisa em vez de falhar com "no such column".
+#   1 — sem versão gravada; caminhos indexados no FTS
+#   2 — caminhos UNINDEXED e pesos BM25 por coluna (TASK-008)
+VERSAO_ESQUEMA = 2
+
+# Os caminhos ficam UNINDEXED: continuam filtráveis (`caminho_origem = ?`) e
+# devolvidos na busca, mas as palavras deles não casam consultas — "api" no nome da
+# pasta fazia todo chunk do arquivo pontuar para "api".
 _ESQUEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
-    caminho_origem,
-    caminho_normalizado,
+    caminho_origem UNINDEXED,
+    caminho_normalizado UNINDEXED,
     titulo_doc,
     secao,
     texto,
@@ -36,7 +46,30 @@ CREATE TABLE IF NOT EXISTS metadados_indice (
 
 _CAMPOS = ["caminho_origem", "caminho_normalizado", "titulo_doc", "secao", "texto", "ordem"]
 
-_CAMPOS_TEXTO = ["caminho_origem", "caminho_normalizado", "titulo_doc", "secao", "texto"]
+# Campos cujos termos contam para a cobertura léxica (ver `_cobertura_lexica`): os
+# mesmos que o FTS indexa.
+_CAMPOS_TEXTO = ["titulo_doc", "secao", "texto"]
+
+# Peso de cada coluna indexada no BM25. A seção pesa o dobro: um termo no nome da
+# seção indica o assunto do trecho inteiro. O título fica em 1 porque é igual em
+# todos os chunks do documento — pesá-lo mais faria o documento todo empatar no topo.
+# Colunas ausentes pesam 0. Ajustável sem reindexar: PESOS_BM25="secao=3,texto=1".
+PESOS_BM25_PADRAO = {"titulo_doc": 1.0, "secao": 2.0, "texto": 1.0}
+
+
+class ErroEsquemaAntigo(Exception):
+    """O índice foi gravado num formato anterior ao atual; precisa de nova ingestão."""
+
+
+def _pesos_bm25() -> list[float]:
+    pesos = dict(PESOS_BM25_PADRAO)
+    configurado = os.environ.get("PESOS_BM25")
+    if configurado:
+        pesos = {}
+        for par in configurado.split(","):
+            coluna, _, valor = par.partition("=")
+            pesos[coluna.strip()] = float(valor)
+    return [pesos.get(campo, 0.0) for campo in _CAMPOS]
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 _TOKEN_FTS = re.compile(r"[^\W_]+", re.UNICODE)
@@ -95,9 +128,64 @@ def criar_indice(caminho: str, compartilhada: bool = False) -> sqlite3.Connectio
     conexao = sqlite3.connect(caminho, timeout=TIMEOUT_CONEXAO_S, check_same_thread=not compartilhada)
     if caminho != ":memory:":
         conexao.execute("PRAGMA journal_mode=WAL")
-    conexao.execute(_ESQUEMA)
-    conexao.commit()
+    if not _tabela_existe(conexao, "chunks"):
+        _criar_esquema(conexao)
+        conexao.commit()
     return conexao
+
+
+def _tabela_existe(conexao: sqlite3.Connection, nome: str) -> bool:
+    linha = conexao.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (nome,)
+    ).fetchone()
+    return linha is not None
+
+
+def _criar_esquema(conexao: sqlite3.Connection) -> None:
+    conexao.execute(_ESQUEMA)
+    conexao.execute(_ESQUEMA_METADADOS)
+    conexao.execute(
+        "INSERT OR REPLACE INTO metadados_indice (chave, valor) VALUES ('versao_esquema', ?)",
+        (str(VERSAO_ESQUEMA),),
+    )
+
+
+def versao_esquema(conexao: sqlite3.Connection) -> int:
+    """Versão gravada no índice; 1 para índices anteriores ao versionamento."""
+    if not _tabela_existe(conexao, "metadados_indice"):
+        return 1
+    linha = conexao.execute(
+        "SELECT valor FROM metadados_indice WHERE chave = 'versao_esquema'"
+    ).fetchone()
+    return int(linha[0]) if linha else 1
+
+
+def verificar_esquema(conexao: sqlite3.Connection) -> str | None:
+    """Mensagem para o usuário se o índice está num formato diferente do atual, ou None."""
+    versao = versao_esquema(conexao)
+    if versao == VERSAO_ESQUEMA:
+        return None
+    return (
+        f"o índice está num formato antigo (versão {versao}; a atual é {VERSAO_ESQUEMA}). "
+        "Rode 'docserver ingest' para reconstruí-lo."
+    )
+
+
+def exigir_esquema_atual(conexao: sqlite3.Connection) -> None:
+    mensagem = verificar_esquema(conexao)
+    if mensagem:
+        raise ErroEsquemaAntigo(mensagem)
+
+
+def recriar_esquema(conexao: sqlite3.Connection) -> None:
+    """Apaga todas as tabelas do índice e cria as do formato atual, sem commit — quem
+    chama decide se isso entra numa transação maior (ver `reindexar`)."""
+    if _tabela_vetorial_existe(conexao):
+        _carregar_extensao_vec(conexao)
+        conexao.execute("DROP TABLE chunks_vec")
+    conexao.execute("DROP TABLE IF EXISTS metadados_indice")
+    conexao.execute("DROP TABLE IF EXISTS chunks")
+    _criar_esquema(conexao)
 
 
 def contar_chunks(caminho: str) -> int:
@@ -114,12 +202,7 @@ def contar_chunks(caminho: str) -> int:
 def limpar_indice(conexao: sqlite3.Connection) -> None:
     """Esvazia o índice por dentro (DROP das tabelas) em vez de apagar o arquivo: no
     Windows o arquivo não pode ser removido enquanto o servidor o mantém aberto."""
-    if _tabela_vetorial_existe(conexao):
-        _carregar_extensao_vec(conexao)
-        conexao.execute("DROP TABLE chunks_vec")
-    conexao.execute("DROP TABLE IF EXISTS metadados_indice")
-    conexao.execute("DROP TABLE IF EXISTS chunks")
-    conexao.execute(_ESQUEMA)
+    recriar_esquema(conexao)
     conexao.commit()
 
 
@@ -132,10 +215,7 @@ def _carregar_extensao_vec(conexao: sqlite3.Connection) -> None:
 
 
 def _tabela_vetorial_existe(conexao: sqlite3.Connection) -> bool:
-    linha = conexao.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_vec'"
-    ).fetchone()
-    return linha is not None
+    return _tabela_existe(conexao, "chunks_vec")
 
 
 def _garantir_tabela_vetorial(conexao: sqlite3.Connection, dimensao: int) -> None:
@@ -195,7 +275,7 @@ def indexar_chunks(
     """
 
     for i, chunk in enumerate(chunks):
-        cursor = conexao.execute(insercao, chunk)
+        cursor = conexao.execute(insercao, {campo: chunk.get(campo) for campo in _CAMPOS})
         if embeddings:
             import sqlite_vec
 
@@ -230,7 +310,10 @@ def reindexar(
     nome_modelo: str | None = None,
 ) -> bool:
     """Substitui todo o conteúdo do índice. Sem embeddings, a camada vetorial é
-    removida (ver `remover_camada_vetorial`). Devolve True se isso aconteceu."""
+    removida (ver `remover_camada_vetorial`). Devolve True se isso aconteceu.
+    Um índice em formato antigo é recriado no formato atual antes de gravar."""
+    if verificar_esquema(conexao):
+        recriar_esquema(conexao)
     conexao.execute("DELETE FROM chunks")
     camada_removida = False
     if not embeddings:
@@ -307,13 +390,13 @@ def buscar(conexao: sqlite3.Connection, consulta: str, limite: int = 5, origem: 
 
     cursor = conexao.execute(
         f"""
-        SELECT rowid AS id, {", ".join(_CAMPOS)}, bm25(chunks) AS score
+        SELECT rowid AS id, {", ".join(_CAMPOS)}, bm25(chunks, {", ".join("?" * len(_CAMPOS))}) AS score
         FROM chunks
         WHERE {condicao}
         ORDER BY score
         LIMIT ?
         """,
-        parametros,
+        [*_pesos_bm25(), *parametros],
     )
     colunas = [descricao[0] for descricao in cursor.description]
     return [dict(zip(colunas, linha)) for linha in cursor.fetchall()]

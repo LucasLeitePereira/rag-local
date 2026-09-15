@@ -40,6 +40,23 @@ def test_buscar_retorna_texto_formatado_com_origem_e_secao(tmp_path):
     assert "Renovação de token" in texto
 
 
+def test_tools_em_indice_de_formato_antigo_orientam_a_reingerir(tmp_path):
+    import sqlite3
+
+    caminho_indice = str(tmp_path / "indice.db")
+    conexao = sqlite3.connect(caminho_indice)
+    conexao.execute("CREATE VIRTUAL TABLE chunks USING fts5(caminho_origem, caminho_normalizado, titulo_doc, secao, texto, ordem UNINDEXED)")
+    conexao.commit()
+    conexao.close()
+
+    for texto in (
+        server._buscar_texto(caminho_indice, "qualquer"),
+        server._listar_documentos_texto(caminho_indice),
+        server._ler_documento_texto("a.md", tmp_path, caminho_indice),
+    ):
+        assert "formato antigo" in texto and "docserver ingest" in texto
+
+
 def test_buscar_sem_resultado_retorna_mensagem_orientando_proximo_passo(tmp_path):
     _, caminho_indice = _preparar_corpus(tmp_path)
 

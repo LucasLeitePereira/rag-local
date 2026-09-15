@@ -61,6 +61,13 @@ Uma ingestão com `--sem-embeddings` sobre um índice que tinha vetores remove a
 camada vetorial (o relatório avisa "Camada vetorial removida"); a busca fica
 só léxica, sem aviso, até uma ingestão com embeddings.
 
+## "Índice indisponível: o índice está num formato antigo"
+
+O índice foi gravado por uma versão anterior do docserver, com outras colunas. Rode
+`docserver ingest`: a ingestão detecta o formato e reconstrói o índice inteiro (o
+relatório avisa). Enquanto isso não acontece, as tools respondem com essa mensagem
+em vez de resultados.
+
 ## `docserver watch` não reagiu a uma mudança
 
 1. Confira se a mudança foi num arquivo que a ingestão leria: formatos não

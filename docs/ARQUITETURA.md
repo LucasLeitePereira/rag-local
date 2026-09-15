@@ -230,6 +230,26 @@ Consequências: ao lado de `data/indice.db` aparecem `indice.db-wal` e
 não garante a memória compartilhada do WAL. Para copiar o índice, pare servidor
 e ingestão antes, ou copie os três arquivos juntos.
 
+### Formato do índice versionado
+
+`metadados_indice.versao_esquema` guarda a versão do formato (`index.VERSAO_ESQUEMA`).
+Índices sem versão contam como versão 1. Quando o formato muda, a próxima
+`docserver ingest` reconstrói o índice sozinha; até lá, `buscar`, `listar_documentos`,
+`ler_documento`, `docserver search` e `docserver avaliar` respondem "índice em
+formato antigo — rode `docserver ingest`" em vez de falhar com `no such column`.
+
+### Pesos BM25 por coluna, caminhos fora do FTS
+
+Os caminhos (`caminho_origem`, `caminho_normalizado`) são `UNINDEXED`: continuam
+filtráveis e exibidos, mas as palavras deles não casam consultas. Antes, "api" na
+pasta `api/` fazia todos os chunks do arquivo pontuarem para "api", e "Data
+Engineering" no nome do PDF inflava o livro inteiro. O BM25 usa pesos por coluna
+(`PESOS_BM25_PADRAO`: `secao` 2, `titulo_doc` 1, `texto` 1). A seção pesa mais
+porque nomeia o assunto do trecho. O título fica em 1 porque se repete em todos os
+chunks do documento. Ajuste sem reindexar com `PESOS_BM25="secao=3,texto=1"`
+(colunas omitidas pesam 0). A cobertura léxica do corte de relevância também
+deixou de considerar os caminhos.
+
 ## Fase futura
 
 Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):

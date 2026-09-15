@@ -47,6 +47,11 @@ def _mensagem_indice_ausente(caminho_indice: str) -> str:
     )
 
 
+def _mensagem_esquema(conexao) -> str | None:
+    mensagem = index.verificar_esquema(conexao)
+    return f"Índice indisponível: {mensagem}" if mensagem else None
+
+
 def _fechar_conexao_persistente() -> None:
     conexao = _persistente["conexao"]
     _persistente["conexao"] = None
@@ -82,6 +87,8 @@ def _listar_documentos_texto(caminho_indice: str) -> str:
         return _mensagem_indice_ausente(caminho_indice)
 
     with _conexao(caminho_indice) as conexao:
+        if mensagem := _mensagem_esquema(conexao):
+            return mensagem
         linhas_bd = conexao.execute(
             "SELECT caminho_origem, titulo_doc, secao FROM chunks ORDER BY caminho_origem, ordem"
         ).fetchall()
@@ -126,6 +133,8 @@ def _buscar_texto(caminho_indice: str, consulta: str, limite: int = 5, documento
         return _mensagem_indice_ausente(caminho_indice)
 
     with _conexao(caminho_indice) as conexao:
+        if mensagem := _mensagem_esquema(conexao):
+            return mensagem
         origem = None
         if documento:
             candidatos = index.resolver_origem(conexao, documento)
@@ -161,6 +170,8 @@ def _ler_documento_texto(caminho: str, docs_normalizado: Path, caminho_indice: s
         return _mensagem_indice_ausente(caminho_indice)
 
     with _conexao(caminho_indice) as conexao:
+        if mensagem := _mensagem_esquema(conexao):
+            return mensagem
         candidatos = index.resolver_documento(conexao, caminho)
 
     if not candidatos:
