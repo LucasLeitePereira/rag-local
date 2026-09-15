@@ -4,7 +4,9 @@ Tarefas para implementar no futuro, no estilo de um board do Jira. A fonte
 principal é o `diagnostico.md` (IDs originais C/A/M/I entre parênteses),
 somada aos ajustes encontrados ao testar o `docserver watch`.
 
-> Última revisão: 2026-09-14 · Os achados C1–C6 do diagnóstico já foram
+> Última revisão: 2026-09-15 · Tarefas de prioridade alta 001–008 concluídas na branch
+> `feat/prioridade-alta`; a TASK-009 ficou em andamento (ver "Retomar amanhã").
+> Os achados C1–C6 do diagnóstico já foram
 > resolvidos (commit `6cdb0aa`) e não aparecem aqui, exceto a parte pendente do C3.
 
 ## Como usar este arquivo
@@ -30,18 +32,18 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 
 | ID | Título | Épico | Prioridade | Esforço | Status |
 |---|---|---|---|---|---|
-| TASK-001 | Paginar `ler_documento` e criar leitura por trecho com vizinhos | Servidor MCP | 🔴 Alta | M | Backlog |
-| TASK-002 | Fallback para busca léxica quando não há vetores ou o modelo falha | Servidor MCP | 🔴 Alta | P | Backlog |
-| TASK-003 | Ativar `journal_mode=WAL` no índice SQLite | Ingestão | 🔴 Alta | P | Backlog |
-| TASK-004 | Embeddings em lote | Ingestão | 🔴 Alta | P | Backlog |
-| TASK-005 | Ingestão incremental por hash de arquivo | Ingestão | 🔴 Alta | G | Backlog |
-| TASK-006 | Números de página nos chunks de PDF | Extração | 🔴 Alta | M | Backlog |
-| TASK-007 | Ampliar o conjunto de avaliação e as métricas | Busca | 🔴 Alta | M | Backlog |
-| TASK-008 | Pesos BM25 por coluna e caminhos `UNINDEXED` | Busca | 🔴 Alta | P | Backlog |
-| TASK-009 | Reranker cross-encoder sobre os candidatos fundidos | Busca | 🔴 Alta | G | Backlog |
+| TASK-001 | Paginar `ler_documento` e criar leitura por trecho com vizinhos | Servidor MCP | 🔴 Alta | M | Concluída |
+| TASK-002 | Fallback para busca léxica quando não há vetores ou o modelo falha | Servidor MCP | 🔴 Alta | P | Concluída |
+| TASK-003 | Ativar `journal_mode=WAL` no índice SQLite | Ingestão | 🔴 Alta | P | Concluída |
+| TASK-004 | Embeddings em lote | Ingestão | 🔴 Alta | P | Concluída |
+| TASK-005 | Ingestão incremental por hash de arquivo | Ingestão | 🔴 Alta | G | Concluída |
+| TASK-006 | Números de página nos chunks de PDF | Extração | 🔴 Alta | M | Concluída |
+| TASK-007 | Ampliar o conjunto de avaliação e as métricas | Busca | 🔴 Alta | M | Concluída |
+| TASK-008 | Pesos BM25 por coluna e caminhos `UNINDEXED` | Busca | 🔴 Alta | P | Concluída |
+| TASK-009 | Reranker cross-encoder sobre os candidatos fundidos | Busca | 🔴 Alta | G | Em andamento |
 | TASK-010 | Autenticação por token no modo HTTP | Segurança | 🔴 Alta | M | Backlog |
 | TASK-011 | `docker-compose.yml` sem TTY e `DEPLOY.md` atualizado sobre HTTP | Infra | 🔴 Alta | P | Backlog |
-| TASK-012 | Eliminar o `UnicodeDecodeError` da verificação do Tesseract | Extração | 🟡 Média | P | Backlog |
+| TASK-012 | Eliminar o `UnicodeDecodeError` da verificação do Tesseract | Extração | 🟡 Média | P | Concluída |
 | TASK-013 | Troca atômica do índice e de `docs-normalizado` | Ingestão | 🟡 Média | M | Backlog |
 | TASK-014 | Servidor abre o índice somente leitura e sem escrita em consultas | Servidor MCP | 🟡 Média | P | Backlog |
 | TASK-015 | Watcher garantido em Linux: modo polling e execução como serviço | Ingestão | 🟡 Média | M | Backlog |
@@ -79,7 +81,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-046 | Healthcheck e warm-up na imagem Docker | Infra | 🟢 Baixa | P | Backlog |
 | TASK-047 | Aviso sobre não publicar índices com conteúdo licenciado | Docs | 🟢 Baixa | P | Backlog |
 | TASK-048 | Reduzir o tempo da suíte de testes rápida | Testes | 🟢 Baixa | P | Backlog |
-| TASK-049 | Remover código morto em `formatar_tabela_avaliacao` | CLI | 🟢 Baixa | P | Backlog |
+| TASK-049 | Remover código morto em `formatar_tabela_avaliacao` | CLI | 🟢 Baixa | P | Concluída |
 | TASK-050 | `docserver stats` mostrar a data da ingestão | CLI | 🟢 Baixa | P | Backlog |
 
 ### Ordem sugerida
@@ -94,21 +96,21 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 ## Épico: Ingestão
 
 ### TASK-003 · Ativar `journal_mode=WAL` no índice SQLite
-- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Concluída (334a281)
 - **Origem:** teste do `docserver watch` + diagnóstico (A4, parte)
 - **Contexto:** o índice usa o journal padrão do SQLite e nenhum `timeout` é configurado. Enquanto a ingestão confirma a transação final, as leituras do servidor ficam bloqueadas, e uma busca que espere mais de 5 s falha com `database is locked`. Com o watcher, reingestões acontecem com o servidor no ar.
 - **O que fazer:** em `index.criar_indice`, executar `PRAGMA journal_mode=WAL` e definir um `timeout` explícito na conexão. Documentar em `docs/ARQUITETURA.md` os arquivos `-wal`/`-shm` gerados.
 - **Critérios de aceite:** uma busca durante a gravação final de uma reingestão responde com o índice antigo, sem erro; há teste com duas conexões (uma escrevendo em transação aberta e outra lendo).
 
 ### TASK-004 · Embeddings em lote
-- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Concluída (124a2da)
 - **Origem:** diagnóstico (A3)
 - **Contexto:** `cli.executar_ingestao` calcula um embedding por chamada (`[calcular(c) for c in todos_chunks]`). A reingestão de 10 arquivos levou 480 s, e em CPU o `encode` em lote costuma ser de 5 a 20 vezes mais rápido.
 - **O que fazer:** função `embed.embeddar_passagens(chunks, batch_size=32)` usando `SentenceTransformer.encode` com lista; manter a injeção para testes.
 - **Critérios de aceite:** vetores idênticos (tolerância numérica) aos da versão atual; tempo de ingestão do corpus real medido antes e depois e registrado no PR.
 
 ### TASK-005 · Ingestão incremental por hash de arquivo
-- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Concluída (a8b7737)
 - **Origem:** diagnóstico (A3); ficou mais urgente com o watcher
 - **Contexto:** hoje, qualquer mudança reextrai todos os PDFs e recalcula todos os embeddings. Adicionar um PDF custou ~8 min de reingestão. Além disso, `ingerido_em` muda sempre, poluindo diffs. Isto revê a decisão "Reindexação completa, não incremental" de `docs/ARQUITETURA.md`.
 - **O que fazer:** tabela `arquivos` no índice (origem, sha256, mtime, tamanho, extrator); reextrair e recalcular embeddings só das origens novas ou alteradas; apagar só os chunks das origens alteradas ou removidas; manter `ingest --limpar` como reconstrução completa.
@@ -149,7 +151,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 ## Épico: Extração
 
 ### TASK-012 · Eliminar o `UnicodeDecodeError` da verificação do Tesseract
-- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** bug · **Status:** Backlog
+- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** bug · **Status:** Concluída (84e63ab)
 - **Origem:** teste do `docserver watch` + diagnóstico (I7, com a causa corrigida)
 - **Contexto:** a cada PDF, `pymupdf4llm.to_markdown` chama `pymupdf.get_tessdata()`, que roda `tesseract --list-langs` e `where tesseract` via shell com `text=True`. Sem o Tesseract instalado, o Windows responde em português na codificação do console (cp850), e a leitura como UTF-8 lança `UnicodeDecodeError` numa thread do `subprocess`. A extração continua, mas o traceback aparece no terminal e parece falha. O diagnóstico atribuía o aviso ao `test_cli.py`; a causa real é essa verificação.
 - **O que fazer:** investigar a opção do `pymupdf4llm` para desligar o OCR (ou definir `TESSDATA_PREFIX`), para que a verificação não rode quando não há OCR; se não houver opção, isolar a chamada. Não mascarar erros reais de extração.
@@ -157,7 +159,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Relacionada:** TASK-017 (se o OCR for adotado, a verificação passa a ser desejada).
 
 ### TASK-006 · Números de página nos chunks de PDF
-- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** melhoria · **Status:** Concluída (84e63ab)
 - **Origem:** diagnóstico (A5)
 - **Contexto:** `pymupdf4llm.to_markdown` é chamado sem `page_chunks=True`; o agente não consegue citar "p. 123", o principal requisito de citação em livros e relatórios.
 - **O que fazer:** extrair por página, preservar marcadores de página no Markdown normalizado, gravar `pagina_inicio`/`pagina_fim` no chunk e devolvê-los em `buscar`.
@@ -262,7 +264,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 ## Épico: Busca
 
 ### TASK-007 · Ampliar o conjunto de avaliação e as métricas
-- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** teste · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** teste · **Status:** Concluída (933bc39)
 - **Origem:** diagnóstico (M24)
 - **Contexto:** hoje são 19 perguntas, só sobre os 6 Markdown de exemplo (os PDFs são 97% dos chunks), com métrica única hit@5 por documento e nenhum caso sem resposta.
 - **O que fazer:** 60 ou mais perguntas cobrindo os PDFs, casos negativos (devem voltar vazios) e métricas hit@k, MRR e recall por chunk; meta mínima configurável.
@@ -270,19 +272,27 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Bloqueia:** TASK-009, TASK-024 (calibração).
 
 ### TASK-008 · Pesos BM25 por coluna e caminhos `UNINDEXED`
-- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** melhoria · **Status:** Concluída (78cbd4c)
 - **Origem:** diagnóstico (M7)
 - **Contexto:** `bm25(chunks)` pondera igualmente caminhos, título, seção e texto; palavras nos caminhos ("api", "Data Engineering") inflam todos os chunks do arquivo.
 - **O que fazer:** marcar `caminho_origem`/`caminho_normalizado` como `UNINDEXED` e usar `bm25(chunks, 0, 0, 2.0, 3.0, 1.0)` ou similar; migrar índices existentes (exige reingestão).
 - **Critérios de aceite:** avaliação (TASK-007) não piora; consulta "api" deixa de favorecer chunks só pelo caminho.
 
 ### TASK-009 · Reranker cross-encoder sobre os candidatos fundidos
-- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Em andamento
 - **Origem:** diagnóstico (C3, parte pendente); fase futura em `ARQUITETURA.md`
 - **Contexto:** o corte por cobertura léxica melhorou "rate limit da API", mas ainda vêm trechos do livro com "limit" e "API" em outro sentido.
 - **O que fazer:** cross-encoder multilíngue leve (ex.: `BAAI/bge-reranker-v2-m3` ou menor) sobre ~20 candidatos; opcional por extra de instalação; pré-carregado no aquecimento.
 - **Critérios de aceite:** ganho mensurável na avaliação; latência por consulta em CPU medida e documentada; sem a extra, a busca funciona como hoje.
 - **Dependências:** TASK-007.
+- **Feito (código, sem commit de calibração):** `src/docserver/rerank.py` com `mminilm` (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) e `bge-m3` (`BAAI/bge-reranker-v2-m3`), escolhidos pela env `RERANKER`; pontuação normalizada por sigmoide (0–1). `buscar_hibrido(reranquear_fn=...)` repontua os 20 primeiros da fusão, ordena e corta abaixo de `RERANK_MINIMO` (env, padrão provisório 0.1); falha no reranker cai no corte normal com aviso. `search --sem-rerank`, `avaliar --rerankers mminilm,bge-m3` (modos `hibrido+<chave>`), aquecimento no servidor e testes (`tests/test_rerank.py`, um `lento` com o mMiniLM real). **O reranker está desligado por padrão** (`RERANKER_ENV_PADRAO = "desligado"`) até a calibração.
+- **Retomar amanhã:**
+  1. Reingerir o corpus real (`docserver ingest`): o `data/indice.db` ainda está no esquema v1 e o servidor/busca respondem "formato antigo" até isso. A reingestão de hoje foi interrompida no meio dos embeddings (a transação única não gravou nada). Anotar o tempo total e rodar de novo para confirmar "Inalterados: 11" em segundos.
+  2. Terminar o download do `bge-reranker-v2-m3` (~2,3 GB no cache do Hugging Face em C:, que está com ~8 GB livres; ficaram ~256 MB parciais).
+  3. `docserver avaliar avaliacao/perguntas-corpus-local.yaml --rerankers mminilm,bge-m3` (e o conjunto `avaliacao/perguntas.yaml`), comparando com a linha de base do `docs/ARQUITETURA.md`: hit@1/hit@5/MRR/trecho@5, taxa de negativas vazias e ms por consulta em CPU.
+  4. Escolher o modelo padrão (ou manter desligado se não houver ganho), calibrar `RERANK_MINIMO` pelos negativos, revisar os pesos BM25 da TASK-008 e registrar números e decisão em `ARQUITETURA.md` (tirar o reranker da "Fase futura"); atualizar README/AGENTES/TROUBLESHOOTING com `RERANKER`/`RERANK_MINIMO`.
+  5. Verificação final do plano: `pytest -m lento`; `docserver search "Application Engine" --documento pt857tape-b022020.pdf` mostra a página; `ler_documento` do livro devolve "parte 1 de N"; `ler_trecho` com id vindo de `buscar`; busca durante ingestão sem `database is locked`; watcher parado por mais de 1 h não se redispara.
+  6. Mover a TASK-009 para "Concluídas" e abrir o PR de `feat/prioridade-alta`.
 
 ### TASK-024 · Limiar vetorial relativo ou calibrado
 - **Prioridade:** 🟡 Média · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
@@ -320,14 +330,14 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 ## Épico: Servidor MCP
 
 ### TASK-001 · Paginar `ler_documento` e criar leitura por trecho com vizinhos
-- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** M · **Tipo:** melhoria · **Status:** Concluída (a8ffaac)
 - **Origem:** diagnóstico (A1)
 - **Contexto:** o livro normalizado tem ~1 MB (~250 mil tokens). Uma chamada a `ler_documento` estoura a janela de contexto de praticamente qualquer agente, e a docstring de `buscar` incentiva essa chamada.
 - **O que fazer:** parâmetros `secao` e `inicio`/`fim` (por `ordem` de chunk), limite padrão de tamanho com aviso de continuação; nova tool `ler_trecho(id, vizinhos=1)` (padrão *small-to-big*); ajustar as docstrings.
 - **Critérios de aceite:** `ler_documento` do livro devolve no máximo o limite configurado, com instrução de como continuar; `ler_trecho` devolve o chunk e os adjacentes; testes para os dois.
 
 ### TASK-002 · Fallback para busca léxica quando não há vetores ou o modelo falha
-- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** bug · **Status:** Backlog
+- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** bug · **Status:** Concluída (5079369)
 - **Origem:** diagnóstico (A2)
 - **Contexto:** `reindexar` apaga as linhas de `chunks_vec`, mas a tabela e `metadados_indice` continuam, e `_tabela_vetorial_existe` segue `True`. Após `ingest --sem-embeddings` sobre um índice vetorial, `buscar_hibrido` tenta carregar o modelo; sem a extra `embeddings`, isso gera `ImportError` em vez do fallback prometido. `ErroModeloDivergente` também chega cru ao agente.
 - **O que fazer:** dropar `chunks_vec`/metadados quando não houver embeddings; checar se há linhas, não só a tabela; capturar `ImportError`/`ErroModeloDivergente` e degradar para léxico com aviso no resultado.
@@ -438,7 +448,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Critérios de aceite:** `pytest --durations=15` analisado; testes pesados marcados ou com fixtures em escopo de sessão; suíte padrão abaixo de 20 s.
 
 ### TASK-049 · Remover código morto em `formatar_tabela_avaliacao`
-- **Prioridade:** 🟢 Baixa · **Esforço:** P · **Tipo:** débito técnico · **Status:** Backlog
+- **Prioridade:** 🟢 Baixa · **Esforço:** P · **Tipo:** débito técnico · **Status:** Concluída (933bc39)
 - **Origem:** diagnóstico (M25)
 - **Contexto:** a função `_somar` nunca é usada e a largura reservada para a linha "geral" nunca é impressa.
 - **Critérios de aceite:** ou a linha "geral" passa a ser impressa, ou o código morto é removido.
@@ -457,4 +467,15 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | ID | Título | Concluída em | Commit |
 |---|---|---|---|
 | — | C1–C6 do diagnóstico (caminhos no índice, chunk completo no MCP, corte léxico, proteções de ingestão, colisão de nomes, cold start) | 2026-09-14 | `6cdb0aa` |
-| — | Ingestão automática com `docserver watch` | 2026-09-14 | pendente de commit |
+| — | Ingestão automática com `docserver watch` | 2026-09-14 | `88cffa4` |
+| TASK-003 | Ativar `journal_mode=WAL` no índice SQLite | 2026-09-15 | `334a281` |
+| TASK-004 | Embeddings em lote (medição em CPU não mostrou ganho com lotes > 1; padrão ficou 1, ajustável por `EMBEDDINGS_TAMANHO_LOTE`) | 2026-09-15 | `124a2da` |
+| TASK-002 | Fallback para busca léxica quando não há vetores ou o modelo falha | 2026-09-15 | `5079369` |
+| TASK-007 | Ampliar o conjunto de avaliação e as métricas (73 perguntas no corpus local, linha de base registrada) | 2026-09-15 | `933bc39` |
+| TASK-049 | Remover código morto em `formatar_tabela_avaliacao` (junto com a TASK-007) | 2026-09-15 | `933bc39` |
+| TASK-008 | Pesos BM25 por coluna e caminhos `UNINDEXED` (+ versão do esquema do índice) | 2026-09-15 | `78cbd4c` |
+| TASK-006 | Números de página nos chunks de PDF | 2026-09-15 | `84e63ab` |
+| TASK-012 | Eliminar o `UnicodeDecodeError` do Tesseract (`use_ocr=False`) | 2026-09-15 | `84e63ab` |
+| TASK-005 | Ingestão incremental por sha256, numa transação única | 2026-09-15 | `a8b7737` |
+| — | Watcher ignora eventos de último acesso (cada ingestão disparava a próxima) | 2026-09-15 | `c5aa97c` |
+| TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |

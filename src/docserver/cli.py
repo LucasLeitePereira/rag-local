@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from docserver import chunk, embed, extract, index
+from docserver import chunk, embed, extract, index, rerank
 
 DOCS_FONTE_PADRAO = Path("docs-fonte")
 DOCS_NORMALIZADO_PADRAO = Path("docs-normalizado")
@@ -329,6 +329,7 @@ def executar_busca(
     modo: str = "hibrido",
     origem: str | None = None,
     avisos: list[str] | None = None,
+    reranquear: bool = True,
 ) -> list[dict]:
     conexao = index.criar_indice(caminho_indice)
     try:
@@ -337,7 +338,9 @@ def executar_busca(
             return index.buscar(conexao, consulta, limite, origem=origem)
         if modo == "vetorial":
             return index.buscar_vetorial(conexao, consulta, limite, origem=origem)
-        return index.buscar_hibrido(conexao, consulta, limite, origem=origem, avisos=avisos)
+        return index.buscar_hibrido(
+            conexao, consulta, limite, origem=origem, avisos=avisos, reranquear_fn=None if reranquear else False
+        )
     finally:
         conexao.close()
 
@@ -389,7 +392,10 @@ def _buscar_no_modo(
             nome_modelo=nome_modelo,
             dimensao=dimensao,
         )
-    if modo == "hibrido":
+    if modo == "hibrido" or modo.startswith("hibrido+"):
+        # `hibrido` puro é a linha de base sem reranker; `hibrido+<reranker>` liga um
+        chave = modo.partition("+")[2]
+        reranquear_fn = (lambda texto, itens: rerank.pontuar(texto, itens, chave)) if chave else False
         return index.buscar_hibrido(
             conexao,
             pergunta,
@@ -397,6 +403,7 @@ def _buscar_no_modo(
             embeddar_consulta_fn=embeddar_consulta_fn,
             nome_modelo=nome_modelo,
             dimensao=dimensao,
+            reranquear_fn=reranquear_fn,
         )
     raise ValueError(f"modo de busca desconhecido: {modo}")
 
@@ -618,10 +625,18 @@ def _comando_avaliar(args: argparse.Namespace) -> None:
         print(f"Índice indisponível: {mensagem_esquema}")
         raise SystemExit(1)
     modos = ("lexico", "vetorial", "hibrido") if tem_vetores else ("lexico", "hibrido")
+    rerankers = _rerankers_da_avaliacao(args.rerankers)
+    modos += tuple(f"hibrido+{chave}" for chave in rerankers)
     if tem_vetores:
         # carrega o modelo antes de medir: senão a 1ª consulta vetorial carrega a
         # latência do import do torch e dos pesos
         embed.embeddar_consulta("aquecimento")
+    for chave in rerankers:
+        try:
+            rerank.obter_modelo(chave)
+        except Exception as erro:  # noqa: BLE001
+            print(f"Reranker {chave} indisponível: {erro}")
+            raise SystemExit(1)
 
     resultado = executar_avaliacao(Path(args.perguntas), args.indice, modos=modos)
     print(formatar_tabela_avaliacao(resultado))
@@ -629,11 +644,22 @@ def _comando_avaliar(args: argparse.Namespace) -> None:
         print("\nÍndice sem camada vetorial: modo vetorial omitido e híbrido equivale ao léxico com corte.")
 
     if args.min_hit5 is not None:
-        hit5 = taxas_avaliacao(_somar_metricas(resultado["hibrido"]))["hit5"]
+        # a meta vale para a busca como o servidor a faz: com o reranker configurado
+        configurado = rerank.reranker_configurado()
+        modo_meta = f"hibrido+{configurado}" if configurado in rerankers else "hibrido"
+        hit5 = taxas_avaliacao(_somar_metricas(resultado[modo_meta]))["hit5"]
         if hit5 is None or hit5 < args.min_hit5:
             atual = "—" if hit5 is None else f"{hit5:.0%}"
-            print(f"\nhit@5 do modo híbrido ({atual}) abaixo da meta de {args.min_hit5:.0%}.")
+            print(f"\nhit@5 do modo {modo_meta} ({atual}) abaixo da meta de {args.min_hit5:.0%}.")
             raise SystemExit(1)
+
+
+def _rerankers_da_avaliacao(opcao: str | None) -> list[str]:
+    """`--rerankers a,b` (ou `nenhum`); sem a opção, o reranker configurado, se houver."""
+    if opcao is None:
+        configurado = rerank.reranker_configurado()
+        return [configurado] if configurado else []
+    return [c.strip() for c in opcao.split(",") if c.strip() and c.strip().lower() not in rerank.DESLIGADO]
 
 
 def executar_stats(caminho_indice: str) -> dict:
@@ -800,7 +826,13 @@ def _comando_search(args: argparse.Namespace) -> None:
 
     avisos: list[str] = []
     resultados = executar_busca(
-        args.indice, args.consulta, args.limite, modo=args.modo, origem=origem, avisos=avisos
+        args.indice,
+        args.consulta,
+        args.limite,
+        modo=args.modo,
+        origem=origem,
+        avisos=avisos,
+        reranquear=not args.sem_rerank,
     )
     for aviso in avisos:
         print(f"Aviso: {aviso}")
@@ -845,6 +877,9 @@ def construir_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--limite", type=int, default=5)
     p_search.add_argument("--modo", choices=["lexico", "vetorial", "hibrido"], default="hibrido")
     p_search.add_argument("--documento", help="restringe a busca a um documento (caminho, parcial ou nome)")
+    p_search.add_argument(
+        "--sem-rerank", action="store_true", help="não reordena os resultados híbridos com o reranker"
+    )
     p_search.set_defaults(func=_comando_search)
 
     p_avaliar = subs.add_parser("avaliar", help="roda o conjunto de avaliação")
@@ -859,7 +894,14 @@ def construir_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="TAXA",
-        help="sai com código 1 se o hit@5 geral do modo híbrido ficar abaixo desta taxa (0–1)",
+        help="sai com código 1 se o hit@5 geral do modo híbrido (com o reranker configurado) ficar abaixo desta taxa (0–1)",
+    )
+    p_avaliar.add_argument(
+        "--rerankers",
+        default=None,
+        metavar="LISTA",
+        help=f"rerankers comparados, separados por vírgula ({', '.join(rerank.MODELOS_RERANKER)}) ou 'nenhum'; "
+        "padrão: o da env RERANKER",
     )
     p_avaliar.set_defaults(func=_comando_avaliar)
 

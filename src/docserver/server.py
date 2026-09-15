@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from docserver import cli, embed, extract, index
+from docserver import cli, embed, extract, index, rerank
 
 DOCS_NORMALIZADO_PADRAO = Path("docs-normalizado")
 INDICE_PADRAO = "data/indice.db"
@@ -328,16 +328,23 @@ def _aquecer(caminho_indice: str) -> None:
         return
     with _conexao(caminho_indice) as conexao:
         tem_vetores = index._tabela_vetorial_existe(conexao)
-    if not tem_vetores:
-        return
 
-    inicio = time.perf_counter()
-    try:
-        embed.embeddar_consulta("aquecimento")
-    except Exception as erro:
-        logger.warning("não foi possível pré-carregar o modelo de embeddings: %s", erro)
-        return
-    logger.info("modelo de embeddings carregado em %.1fs", time.perf_counter() - inicio)
+    if tem_vetores:
+        inicio = time.perf_counter()
+        try:
+            embed.embeddar_consulta("aquecimento")
+            logger.info("modelo de embeddings carregado em %.1fs", time.perf_counter() - inicio)
+        except Exception as erro:
+            logger.warning("não foi possível pré-carregar o modelo de embeddings: %s", erro)
+
+    chave = rerank.reranker_configurado()
+    if chave:
+        inicio = time.perf_counter()
+        try:
+            rerank.pontuar("aquecimento", [{"texto": "aquecimento"}], chave)
+            logger.info("reranker %s carregado em %.1fs", chave, time.perf_counter() - inicio)
+        except Exception as erro:
+            logger.warning("não foi possível pré-carregar o reranker %s: %s", chave, erro)
 
 
 @mcp.tool()

@@ -124,6 +124,12 @@ COBERTURA_LEXICA_MINIMA_PADRAO = 0.5
 # precisar reindexar.
 SIMILARIDADE_MINIMA_PADRAO = 0.85
 
+# Com reranker, os N_CANDIDATOS_RERANK primeiros da fusão RRF são repontuados pelo
+# cross-encoder, reordenados, e só ficam os com pontuação >= RERANK_MINIMO — o corte
+# de `_relevante` deixa de valer. Valores calibrados pela avaliação (ver ARQUITETURA).
+N_CANDIDATOS_RERANK = 20
+RERANK_MINIMO_PADRAO = 0.1
+
 # Palavras vazias do português (já sem acento, minúsculas) removidas da consulta
 # antes de montar a query FTS e de calcular a cobertura léxica — sem isso, uma
 # pergunta em linguagem natural ("qual o objetivo do projeto...") faz "o", "do" e
@@ -689,8 +695,13 @@ def buscar_hibrido(
     dimensao: int | None = None,
     origem: str | None = None,
     avisos: list[str] | None = None,
+    reranquear_fn=None,
 ) -> list[dict]:
     """Busca híbrida (BM25 + vetorial, fundidas por RRF) com corte de relevância.
+
+    `reranquear_fn(consulta, itens) -> pontuações` reordena os candidatos da fusão; None
+    usa o reranker da env `RERANKER` (ver `rerank.py`) e False desliga. Se o reranker
+    falhar, a busca segue com o corte de relevância normal e um aviso.
 
     Se a via vetorial falhar — extra `embeddings` não instalada, modelo divergente do
     índice, extensão sqlite-vec indisponível —, a busca segue só com o léxico em vez
@@ -700,6 +711,28 @@ def buscar_hibrido(
     peso_vetorial = float(os.environ.get("PESO_VETORIAL", 1.0))
     cobertura_minima = float(os.environ.get("COBERTURA_LEXICA_MINIMA", COBERTURA_LEXICA_MINIMA_PADRAO))
     similaridade_minima = float(os.environ.get("SIMILARIDADE_MINIMA", SIMILARIDADE_MINIMA_PADRAO))
+
+    if reranquear_fn is None:
+        from docserver import rerank
+
+        chave = rerank.reranker_configurado()
+        if chave:
+            def reranquear_fn(texto, itens):
+                return rerank.pontuar(texto, itens, chave)
+
+    def _avisar(mensagem: str) -> None:
+        if avisos is not None:
+            avisos.append(mensagem)
+
+    def _finalizar(candidatos: list[dict]) -> list[dict]:
+        if reranquear_fn:
+            try:
+                return _reranquear(consulta, candidatos, reranquear_fn, limite)
+            except Exception as erro:  # noqa: BLE001 — qualquer falha cai no corte normal
+                motivo = str(erro) or type(erro).__name__
+                logger.warning("reranker indisponível (%s) — usando a ordem da busca híbrida", motivo)
+                _avisar(f"reranker indisponível ({motivo}); resultados na ordem da busca híbrida.")
+        return _filtrar(candidatos)[:limite]
 
     lexico = buscar(conexao, consulta, limite=20, origem=origem)
     ids_lexicos = {item["id"] for item in lexico}
@@ -716,10 +749,10 @@ def buscar_hibrido(
         logger.warning(
             "índice vetorial ausente — busca híbrida caindo para busca léxica (BM25) pura"
         )
-        return _filtrar(lexico)[:limite]
+        return _finalizar(lexico)
 
     if peso_vetorial == 0:
-        return _filtrar(lexico)[:limite]
+        return _finalizar(lexico)
 
     try:
         vetorial = buscar_vetorial(
@@ -734,11 +767,8 @@ def buscar_hibrido(
     except (ImportError, ErroModeloDivergente, sqlite3.OperationalError) as erro:
         motivo = str(erro) or type(erro).__name__
         logger.warning("busca vetorial indisponível (%s) — caindo para busca léxica (BM25) pura", motivo)
-        if avisos is not None:
-            avisos.append(
-                f"busca semântica indisponível ({motivo}); os resultados vêm apenas da busca léxica."
-            )
-        return _filtrar(lexico)[:limite]
+        _avisar(f"busca semântica indisponível ({motivo}); os resultados vêm apenas da busca léxica.")
+        return _finalizar(lexico)
     similaridades = {item["id"]: _distancia_para_similaridade(item["distancia"]) for item in vetorial}
     for item in vetorial:
         item["similaridade"] = similaridades[item["id"]]
@@ -750,4 +780,20 @@ def buscar_hibrido(
     for item in fundido:
         if item["id"] in similaridades:
             item["similaridade"] = similaridades[item["id"]]
-    return _filtrar(fundido)[:limite]
+    return _finalizar(fundido)
+
+
+def _reranquear(consulta: str, candidatos: list[dict], reranquear_fn, limite: int) -> list[dict]:
+    """Repontua os primeiros candidatos com o reranker, ordena pela pontuação e corta
+    abaixo de `RERANK_MINIMO` (env, padrão `RERANK_MINIMO_PADRAO`)."""
+    minimo = float(os.environ.get("RERANK_MINIMO", RERANK_MINIMO_PADRAO))
+    topo = candidatos[:N_CANDIDATOS_RERANK]
+    if not topo:
+        return []
+    pontuacoes = list(reranquear_fn(consulta, topo))
+    if len(pontuacoes) != len(topo):
+        raise ValueError("o reranker devolveu uma quantidade de pontuações diferente da de candidatos")
+    for item, pontuacao in zip(topo, pontuacoes):
+        item["rerank"] = float(pontuacao)
+    ordenados = sorted(topo, key=lambda item: item["rerank"], reverse=True)
+    return [item for item in ordenados if item["rerank"] >= minimo][:limite]

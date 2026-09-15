@@ -138,3 +138,10 @@ def tres_paginas_pdf(tmp_path):
     documento.save(caminho)
     documento.close()
     return caminho
+
+
+@pytest.fixture(autouse=True)
+def _reranker_desligado(monkeypatch):
+    """A suíte não carrega o cross-encoder real: testes de reranker injetam
+    `reranquear_fn` ou ligam a env explicitamente."""
+    monkeypatch.setenv("RERANKER", "desligado")
