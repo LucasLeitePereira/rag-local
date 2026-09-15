@@ -12,3 +12,4 @@ data/*
 .DS_Store
 .vscode/
 docs-fonte/*.pdf
+apresentacao-entrevista.md

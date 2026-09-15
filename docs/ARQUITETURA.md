@@ -201,6 +201,20 @@ ainda presente em `docs-normalizado/` de uma ingestão anterior — que causou
 uma busca sobre um documento devolver trechos de outro completamente
 diferente.
 
+### Watcher como processo separado, disparando a ingestão completa
+
+`docserver watch` (`src/docserver/watch.py`) observa `docs-fonte/` com o
+`watchdog`, agrupa os eventos por alguns segundos e chama o mesmo
+`executar_ingestao` do `docserver ingest`. Não existe caminho de indexação
+novo: todas as proteções e a remoção de órfãos valem igual, e a decisão de
+reindexação completa continua de pé.
+
+Ele roda num processo próprio, e não como thread do servidor MCP, por três
+motivos: no transporte stdio o stdout é o canal do protocolo e não pode receber
+relatórios; o cálculo de embeddings de uma ingestão não disputa CPU e GIL com as
+buscas; e uma falha no watcher não derruba o servidor. A consistência entre os
+dois processos vem do SQLite: a troca dos chunks é uma única transação.
+
 ## Fase futura
 
 Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):
@@ -210,7 +224,8 @@ Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):
 - **Transporte HTTP com OAuth** — para servir múltiplos usuários/serviços remotos.
 - **Permissão por documento** — hoje qualquer agente conectado vê toda a documentação.
 - **Interface web** — hoje a única forma de leitura humana é o Markdown normalizado em disco.
-- **Reindexação automática via CI ou watcher de arquivos** — hoje `docserver ingest` é manual.
+- **Reindexação automática via CI** — o watcher local (`docserver watch`) já existe; falta disparar a ingestão a partir de um pipeline.
+- **Watcher garantido em Linux** — modo polling para Docker/WSL2/rede e execução como serviço (ver `docs/INGESTAO.md`).
 - **OCR para PDF escaneado** — hoje esses arquivos só são marcados como "suspeitos" no relatório.
 - **Integração direta com Confluence, Google Drive, Notion** — hoje a entrada é sempre `docs-fonte/`.
 

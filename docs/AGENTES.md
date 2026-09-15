@@ -7,6 +7,23 @@ porta nem rede. Isso significa que o cliente precisa rodar na mesma máquina
 existem — e também que não existe um link para "abrir" ou compartilhar: o
 processo só fala pelos streams padrão de entrada/saída de quem o subiu.
 
+## Atalho: `docserver server-mcp --local`
+
+O jeito mais simples de servir via HTTP na rede local:
+
+```bash
+docserver server-mcp --local
+```
+
+Usa sempre o `data/indice.db` e o `docs-normalizado/` do próprio projeto
+(independente do diretório de onde o comando roda), sobe em
+`0.0.0.0:8765` e imprime a URL de acesso (`http://<IP-da-máquina>:8765/mcp`).
+Sem `--local`, sobe em `127.0.0.1:8765` (só esta máquina acessa). Se o índice
+não existir, aborta pedindo `docserver ingest`. Para host, porta ou caminhos
+diferentes, use `serve --http` como descrito abaixo.
+
+## `serve --http` (configuração manual)
+
 Se você precisa de um link (para um cliente MCP remoto, para testar com
 `curl`/[MCP Inspector](https://github.com/modelcontextprotocol/inspector),
 ou para servir mais de um cliente ao mesmo tempo), suba com `--http`:
@@ -109,9 +126,7 @@ Para consumir de outro PC (mesma rede local), suba com `--http --host
 `data/indice.db`:
 
 ```bash
-docserver --indice /caminho/absoluto/data/indice.db \
-  --docs-normalizado /caminho/absoluto/docs-normalizado \
-  serve --http --host 0.0.0.0 --porta 8765
+docserver server-mcp --local
 ```
 
 `--host 0.0.0.0` é o que aceita conexões de outras máquinas — com o padrão

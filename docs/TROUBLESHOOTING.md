@@ -44,6 +44,22 @@ em `docs/INGESTAO.md`):
 - **"nenhum arquivo em formato suportado"** ou **"não gerou nenhum chunk"** —
   se a intenção é mesmo esvaziar o índice, repita com `--forcar`.
 
+## `docserver watch` não reagiu a uma mudança
+
+1. Confira se a mudança foi num arquivo que a ingestão leria: formatos não
+   suportados, arquivos ocultos (`.algo`), temporários do Office (`~$algo`) e
+   pastas vazias são ignorados de propósito.
+2. Espere o `--espera` (2 s por padrão) **sem novas mudanças**: enquanto um
+   editor ou uma cópia continuam gravando, a contagem recomeça.
+3. Se aparece `docserver: ingestão abortada: ...`, a mudança foi detectada, mas
+   a ingestão se recusou a rodar (ver a seção anterior). O watcher não aceita
+   `--forcar`; para esvaziar o índice de propósito, use `docserver ingest --forcar`.
+4. Em **Linux**, o watcher depende de `inotify`, que não recebe eventos em
+   volumes do Docker montados a partir de Windows/macOS, em `/mnt/c` do WSL2 e
+   em compartilhamentos NFS/SMB. Nesses ambientes, rode `docserver ingest`
+   manualmente (o modo polling é trabalho futuro, ver `docs/INGESTAO.md`). Em
+   árvores muito grandes, aumente `fs.inotify.max_user_watches`.
+
 ## `ler_documento` responde "Documento não encontrado" para tudo
 
 Índices criados antes da versão que passou a gravar o caminho normalizado

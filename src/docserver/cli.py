@@ -1,4 +1,4 @@
-"""Ponto de entrada da CLI: ingest, search, stats, serve."""
+"""Ponto de entrada da CLI: ingest, watch, search, stats, serve."""
 
 from __future__ import annotations
 
@@ -12,6 +12,13 @@ from docserver import chunk, embed, extract, index
 DOCS_FONTE_PADRAO = Path("docs-fonte")
 DOCS_NORMALIZADO_PADRAO = Path("docs-normalizado")
 INDICE_PADRAO = "data/indice.db"
+
+# `server-mcp` não aceita caminhos: usa sempre os do próprio projeto, independente do
+# diretório de onde o comando é executado (instalação editável, layout src/).
+RAIZ_PROJETO = Path(__file__).resolve().parents[2]
+INDICE_FIXO = RAIZ_PROJETO / "data" / "indice.db"
+DOCS_NORMALIZADO_FIXO = RAIZ_PROJETO / "docs-normalizado"
+PORTA_SERVER_MCP = 8765
 
 MIN_CARACTERES_SUSPEITO = 20
 
@@ -375,6 +382,48 @@ def _comando_serve(args: argparse.Namespace) -> None:
     )
 
 
+def _ip_rede_local() -> str:
+    """IP desta máquina na rede local. O `connect` em UDP só escolhe a interface de
+    saída — nenhum pacote é enviado."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("10.255.255.255", 1))
+            return sock.getsockname()[0]
+        except OSError:
+            return "127.0.0.1"
+
+
+def _comando_server_mcp(args: argparse.Namespace) -> None:
+    from docserver.server import main as servir
+
+    if not INDICE_FIXO.exists():
+        print(
+            f"Índice não encontrado em {INDICE_FIXO}. Rode 'docserver ingest' na raiz do projeto primeiro.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    host = "0.0.0.0" if args.local else "127.0.0.1"
+    endereco = _ip_rede_local() if args.local else "127.0.0.1"
+    print(f"docserver: servidor MCP em http://{endereco}:{PORTA_SERVER_MCP}/mcp", file=sys.stderr)
+    if args.local:
+        print(
+            "docserver: aviso — sem autenticação; qualquer dispositivo da rede local tem acesso.",
+            file=sys.stderr,
+        )
+
+    servir(
+        docs_normalizado=DOCS_NORMALIZADO_FIXO,
+        indice=str(INDICE_FIXO),
+        transporte="http",
+        host=host,
+        porta=PORTA_SERVER_MCP,
+        aquecer=True,
+    )
+
+
 def _comando_ingest(args: argparse.Namespace) -> None:
     docs_fonte = Path(args.docs_fonte)
     docs_normalizado = Path(args.docs_normalizado)
@@ -398,6 +447,31 @@ def _comando_ingest(args: argparse.Namespace) -> None:
         print(f"Ingestão abortada: {erro}", file=sys.stderr)
         sys.exit(1)
     print(formatar_relatorio(relatorio))
+
+
+def _comando_watch(args: argparse.Namespace) -> None:
+    from docserver import watch
+
+    docs_fonte = Path(args.docs_fonte)
+    docs_normalizado = Path(args.docs_normalizado)
+    try:
+        validar_docs_fonte(docs_fonte)
+    except ErroIngestao as erro:
+        print(f"Ingestão abortada: {erro}", file=sys.stderr)
+        sys.exit(1)
+    Path(args.indice).parent.mkdir(parents=True, exist_ok=True)
+    docs_normalizado.mkdir(parents=True, exist_ok=True)
+
+    try:
+        watch.observar(
+            docs_fonte,
+            docs_normalizado,
+            args.indice,
+            sem_embeddings=args.sem_embeddings,
+            espera=args.espera,
+        )
+    except KeyboardInterrupt:
+        print("docserver: watcher encerrado")
 
 
 def _comando_search(args: argparse.Namespace) -> None:
@@ -443,6 +517,18 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     p_ingest.set_defaults(func=_comando_ingest)
 
+    p_watch = subs.add_parser(
+        "watch", help="observa docs-fonte e reingere automaticamente quando algum arquivo muda"
+    )
+    p_watch.add_argument(
+        "--espera",
+        type=float,
+        default=2.0,
+        help="segundos sem novas mudanças antes de reingerir (agrupa cópias e salvamentos em lote)",
+    )
+    p_watch.add_argument("--sem-embeddings", action="store_true")
+    p_watch.set_defaults(func=_comando_watch)
+
     p_search = subs.add_parser("search", help="busca pelo terminal")
     p_search.add_argument("consulta")
     p_search.add_argument("--limite", type=int, default=5)
@@ -466,6 +552,17 @@ def construir_parser() -> argparse.ArgumentParser:
         help="não pré-carrega o modelo de embeddings no startup (a 1ª busca fica lenta)",
     )
     p_serve.set_defaults(func=_comando_serve)
+
+    p_server_mcp = subs.add_parser(
+        "server-mcp",
+        help="sobe o servidor MCP via HTTP com o índice e os docs do projeto (use --local para a rede)",
+    )
+    p_server_mcp.add_argument(
+        "--local",
+        action="store_true",
+        help=f"expõe na rede local (0.0.0.0:{PORTA_SERVER_MCP}); sem a flag, só esta máquina acessa",
+    )
+    p_server_mcp.set_defaults(func=_comando_server_mcp)
 
     p_stats = subs.add_parser("stats", help="documentos, chunks, modelo, data da ingestão")
     p_stats.set_defaults(func=_comando_stats)

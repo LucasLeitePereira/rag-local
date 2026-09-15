@@ -238,6 +238,60 @@ def test_cli_serve_com_flag_http_repassa_host_e_porta_para_o_servidor(tmp_path, 
     ]
 
 
+def _preparar_server_mcp(tmp_path, monkeypatch):
+    docs_normalizado, caminho_indice = _preparar_corpus(tmp_path)
+    monkeypatch.setattr(cli, "INDICE_FIXO", Path(caminho_indice))
+    monkeypatch.setattr(cli, "DOCS_NORMALIZADO_FIXO", Path(docs_normalizado))
+    monkeypatch.setattr(cli, "_ip_rede_local", lambda: "192.168.0.10")
+    chamadas = []
+    monkeypatch.setattr("docserver.server.main", lambda **kwargs: chamadas.append(kwargs))
+    return docs_normalizado, caminho_indice, chamadas
+
+
+def test_server_mcp_local_sobe_http_na_rede_com_caminhos_fixos(tmp_path, monkeypatch, capsys):
+    docs_normalizado, caminho_indice, chamadas = _preparar_server_mcp(tmp_path, monkeypatch)
+    outro_dir = tmp_path / "outro-cwd"
+    outro_dir.mkdir()
+    monkeypatch.chdir(outro_dir)
+
+    cli.main(["server-mcp", "--local"])
+
+    assert chamadas == [
+        {
+            "docs_normalizado": Path(docs_normalizado),
+            "indice": caminho_indice,
+            "transporte": "http",
+            "host": "0.0.0.0",
+            "porta": 8765,
+            "aquecer": True,
+        }
+    ]
+    assert "http://192.168.0.10:8765/mcp" in capsys.readouterr().err
+
+
+def test_server_mcp_sem_local_fica_restrito_a_esta_maquina(tmp_path, monkeypatch):
+    _, _, chamadas = _preparar_server_mcp(tmp_path, monkeypatch)
+
+    cli.main(["server-mcp"])
+
+    assert chamadas[0]["host"] == "127.0.0.1"
+    assert chamadas[0]["transporte"] == "http"
+
+
+def test_server_mcp_aborta_sem_indice(tmp_path, monkeypatch):
+    _, _, chamadas = _preparar_server_mcp(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "INDICE_FIXO", tmp_path / "nao-existe.db")
+
+    with pytest.raises(SystemExit):
+        cli.main(["server-mcp", "--local"])
+
+    assert chamadas == []
+
+
+def test_raiz_do_projeto_contem_o_pyproject():
+    assert (cli.RAIZ_PROJETO / "pyproject.toml").is_file()
+
+
 def test_ler_documento_funciona_quando_ingestao_e_servidor_usam_cwds_e_caminhos_diferentes(tmp_path, monkeypatch):
     # regressão C1: a ingestão rodava com caminhos relativos ao cwd e o servidor,
     # com caminhos absolutos — `ler_documento` nunca achava nada no servidor real.

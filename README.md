@@ -104,8 +104,9 @@ docserver ingest
 Se instalou só a busca léxica, use `docserver ingest --sem-embeddings`.
 
 O relatório final deve mostrar `Falhas de extração: 0`. Rode de novo sempre
-que adicionar, editar ou remover arquivos em `docs-fonte\`. O aviso sobre
-`HF_TOKEN` pode ser ignorado.
+que adicionar, editar ou remover arquivos em `docs-fonte\`, ou deixe
+`docserver watch` aberto num terminal para reingerir automaticamente (ver
+[`docs/INGESTAO.md`](docs/INGESTAO.md)). O aviso sobre `HF_TOKEN` pode ser ignorado.
 
 **7. Teste a busca pelo terminal:**
 
@@ -177,6 +178,10 @@ docserver ingest
 Se instalou só a busca léxica, use `docserver ingest --sem-embeddings`. Se
 aparecer `ImportError: libGL.so.1`, instale `sudo apt install -y libgl1` e
 rode de novo.
+
+Para reingerir automaticamente ao mudar os documentos, existe `docserver watch`.
+Em Docker, WSL2 (`/mnt/c`) ou pastas de rede ele pode não detectar mudanças;
+veja as limitações em [`docs/INGESTAO.md`](docs/INGESTAO.md).
 
 **7. Teste a busca pelo terminal:**
 
@@ -365,8 +370,8 @@ Variante léxica (máquina fraca ou pedido do usuário): `VENV_PY -m pip install
 
 A instalação com embeddings pode levar vários minutos; use um timeout longo.
 
-- **Verificação:** `DOCSERVER --help` lista os subcomandos `ingest`, `search`,
-  `avaliar`, `serve` e `stats`.
+- **Verificação:** `DOCSERVER --help` lista os subcomandos `ingest`, `watch`,
+  `search`, `avaliar`, `serve`, `server-mcp` e `stats`.
 
 ### Etapa 4 — documentos
 
@@ -445,7 +450,8 @@ Informe ao usuário:
 1. `<RAIZ>` e o modo instalado (híbrido ou só léxico);
 2. o resumo do `ingest` (arquivos, chunks, falhas);
 3. onde o MCP foi configurado e se precisa reiniciar o cliente;
-4. que, ao mudar os documentos, basta rodar `DOCSERVER ingest` de novo.
+4. que, ao mudar os documentos, basta rodar `DOCSERVER ingest` de novo, ou
+   manter `DOCSERVER watch` aberto para reingerir automaticamente.
 
 ## Documentação
 

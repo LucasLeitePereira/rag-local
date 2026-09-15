@@ -530,7 +530,7 @@ Registre como fase futura no `ARQUITETURA.md`, mas **não construa agora**:
 - Transporte HTTP, OAuth, autenticação, multiusuário
 - Permissão por documento
 - Interface web
-- Reindexação automática / watcher de arquivos
+- Reindexação automática / watcher de arquivos *(watcher implementado depois como `docserver watch`; ver `docs/INGESTAO.md`)*
 - OCR para PDF escaneado
 - Integração com Confluence, Drive, Notion
 
