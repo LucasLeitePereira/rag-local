@@ -440,7 +440,7 @@ peça que ele configure.
 
 - **Verificação:** Claude Code → `claude mcp list` mostra `docserver` como
   conectado. Nos demais, peça ao usuário que reinicie o cliente e confirme
-  que as ferramentas `buscar`, `listar_documentos` e `ler_documento`
+  que as ferramentas `buscar`, `listar_documentos`, `ler_trecho` e `ler_documento`
   aparecem.
 
 ### Etapa 8 — relatório final

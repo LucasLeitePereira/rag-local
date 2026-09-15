@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -16,6 +18,14 @@ DOCS_NORMALIZADO_PADRAO = Path("docs-normalizado")
 INDICE_PADRAO = "data/indice.db"
 
 logger = logging.getLogger(__name__)
+
+# Tamanho máximo, em caracteres, de cada parte devolvida por `ler_documento`. O livro
+# do corpus local tem mais de 1 milhão de caracteres: devolvido inteiro, estourava o
+# contexto do agente. 20 000 caracteres ≈ 5 000 tokens. Ajustável via env.
+LIMITE_CARACTERES_LEITURA_PADRAO = 20_000
+MAX_VIZINHOS = 5
+
+_CABECALHO = re.compile(r"^(#{1,3})\s+(.+?)\s*$", re.MULTILINE)
 
 mcp = FastMCP("docserver")
 
@@ -162,10 +172,17 @@ def _dentro_de(caminho: Path, base: Path) -> bool:
         return False
 
 
-def _ler_documento_texto(caminho: str, docs_normalizado: Path, caminho_indice: str) -> str:
+def _ler_documento_texto(
+    caminho: str,
+    docs_normalizado: Path,
+    caminho_indice: str,
+    parte: int = 1,
+    secao: str | None = None,
+) -> str:
     """Resolve o documento pelo índice (origem ou normalizado, completo, parcial ou só
     o nome) e lê o arquivo relativo a `docs_normalizado` — o índice guarda o caminho
-    normalizado relativo a essa pasta, então funciona de qualquer cwd."""
+    normalizado relativo a essa pasta, então funciona de qualquer cwd. Documentos
+    maiores que `LIMITE_CARACTERES_LEITURA` saem em partes; `secao` recorta uma seção."""
     if ".." in Path(caminho.replace("\\", "/")).parts:
         return f"Caminho inválido: {caminho}"
     if _indice_ausente(caminho_indice):
@@ -193,7 +210,113 @@ def _ler_documento_texto(caminho: str, docs_normalizado: Path, caminho_indice: s
         )
 
     _, corpo = extract.ler_front_matter(arquivo.read_text(encoding="utf-8"))
-    return extract.remover_marcadores_pagina(corpo)
+    corpo = extract.remover_marcadores_pagina(corpo)
+
+    if secao:
+        corpo, erro = _recortar_secao(corpo, secao)
+        if erro:
+            return erro
+
+    partes = _dividir_em_partes(corpo, _limite_leitura())
+    if len(partes) == 1 and parte == 1:
+        return partes[0]
+    if not 1 <= parte <= len(partes):
+        return f"Parte {parte} não existe: {origem} tem {len(partes)} parte(s)."
+
+    argumentos = f'caminho="{origem}"' + (f', secao="{secao}"' if secao else "")
+    cabecalho = f"[{origem}{' › ' + secao if secao else ''} — parte {parte} de {len(partes)}]"
+    texto = f"{cabecalho}\n\n{partes[parte - 1]}"
+    if parte < len(partes):
+        texto += f"\n\n[Continua: ler_documento({argumentos}, parte={parte + 1})]"
+    return texto
+
+
+def _limite_leitura() -> int:
+    try:
+        return max(1, int(os.environ.get("LIMITE_CARACTERES_LEITURA", LIMITE_CARACTERES_LEITURA_PADRAO)))
+    except ValueError:
+        return LIMITE_CARACTERES_LEITURA_PADRAO
+
+
+def _dividir_em_partes(texto: str, limite: int) -> list[str]:
+    """Partes de até `limite` caracteres, cortadas entre parágrafos. Um parágrafo maior
+    que o limite é cortado na última quebra de linha (ou espaço) antes dele."""
+    if len(texto) <= limite:
+        return [texto]
+
+    pedacos: list[str] = []
+    for paragrafo in texto.split("\n\n"):
+        while len(paragrafo) > limite:
+            corte = max(paragrafo.rfind("\n", 0, limite), paragrafo.rfind(" ", 0, limite))
+            corte = corte if corte > 0 else limite
+            pedacos.append(paragrafo[:corte])
+            paragrafo = paragrafo[corte:].lstrip()
+        pedacos.append(paragrafo)
+
+    partes: list[str] = []
+    atual = ""
+    for pedaco in pedacos:
+        candidato = f"{atual}\n\n{pedaco}" if atual else pedaco
+        if atual and len(candidato) > limite:
+            partes.append(atual)
+            atual = pedaco
+        else:
+            atual = candidato
+    if atual.strip():
+        partes.append(atual)
+    return partes
+
+
+def _recortar_secao(corpo: str, secao: str) -> tuple[str, str | None]:
+    """(texto da seção, None) ou ("", mensagem de erro). Casa o nome sem acento e sem
+    caixa: primeiro igual, depois contido. A seção vai do cabeçalho até o próximo de
+    nível igual ou superior (inclui as subseções)."""
+    cabecalhos = list(_CABECALHO.finditer(corpo))
+    alvo = index._sem_acentos(secao).strip()
+    iguais = [c for c in cabecalhos if index._sem_acentos(c.group(2)) == alvo]
+    candidatos = iguais or [c for c in cabecalhos if alvo in index._sem_acentos(c.group(2))]
+
+    if not candidatos:
+        nomes = list(dict.fromkeys(c.group(2) for c in cabecalhos))
+        lista = "\n".join(f"- {n}" for n in nomes[:50]) or "(o documento não tem cabeçalhos)"
+        return "", f"Seção não encontrada: {secao}. Seções disponíveis:\n{lista}"
+    if len({c.group(2) for c in candidatos}) > 1:
+        opcoes = "\n".join(f"- {n}" for n in dict.fromkeys(c.group(2) for c in candidatos))
+        return "", f"Seção ambígua, mais de uma corresponde a '{secao}':\n{opcoes}"
+
+    escolhido = candidatos[0]
+    nivel = len(escolhido.group(1))
+    fim = len(corpo)
+    for c in cabecalhos:
+        if c.start() > escolhido.start() and len(c.group(1)) <= nivel:
+            fim = c.start()
+            break
+    return corpo[escolhido.start() : fim].strip(), None
+
+
+def _ler_trecho_texto(caminho_indice: str, chunk_id: int, vizinhos: int = 1) -> str:
+    if _indice_ausente(caminho_indice):
+        return _mensagem_indice_ausente(caminho_indice)
+    vizinhos = max(0, min(MAX_VIZINHOS, int(vizinhos)))
+
+    with _conexao(caminho_indice) as conexao:
+        if mensagem := _mensagem_esquema(conexao):
+            return mensagem
+        trechos, total = index.obter_trechos(conexao, int(chunk_id), vizinhos)
+
+    if not trechos:
+        return f"Trecho não encontrado: chunk {chunk_id}. Use o número de chunk que aparece nos resultados de buscar."
+
+    origem = trechos[0]["caminho_origem"]
+    primeira, ultima = int(trechos[0]["ordem"]), int(trechos[-1]["ordem"])
+    blocos = [f"{origem} — posições {primeira} a {ultima} (o documento vai da posição 0 à {total - 1})"]
+    for t in trechos:
+        detalhes = [f"chunk {t['id']}", f"posição {t['ordem']}"]
+        if paginas := cli.formatar_paginas(t):
+            detalhes.append(paginas)
+        marca = " ← pedido" if t["id"] == int(chunk_id) else ""
+        blocos.append(f"[{t['secao']}  ({' · '.join(detalhes)}){marca}]\n{t['texto']}")
+    return "\n\n".join(blocos)
 
 
 def _aquecer(caminho_indice: str) -> None:
@@ -243,16 +366,33 @@ def buscar(consulta: str, limite: int = 5, documento: str | None = None) -> str:
     pela forma, se misturem na resposta. Um resultado vazio significa que nada no índice
     passou no corte mínimo de relevância — não invente uma resposta nesse caso, avise que
     a documentação não cobre o assunto. Se o trecho retornado não for suficiente, chame
-    `ler_documento` com o caminho indicado para ver o documento inteiro."""
+    `ler_trecho` com o número do chunk para ver o texto em volta, ou `ler_documento`
+    com o caminho (e, se quiser, a seção) indicado."""
     return _buscar_texto(_config["indice"], consulta, limite, documento=documento)
 
 
 @mcp.tool()
-def ler_documento(caminho: str) -> str:
-    """Devolve o conteúdo completo de um documento da documentação do projeto. Use
-    depois de `buscar` ou `listar_documentos`, quando o trecho retornado não trouxer
-    contexto suficiente. Aceita tanto o caminho de origem quanto o normalizado."""
-    return _ler_documento_texto(caminho, _config["docs_normalizado"], _config["indice"])
+def ler_documento(caminho: str, parte: int = 1, secao: str | None = None) -> str:
+    """Devolve o conteúdo de um documento da documentação do projeto. Use depois de
+    `buscar` ou `listar_documentos`, quando os trechos não trouxerem contexto suficiente.
+    Aceita o caminho de origem ou o normalizado (completo, parcial ou só o nome).
+    Documentos grandes vêm em partes: a resposta começa com "parte X de N" e termina com
+    a chamada para a parte seguinte. Passe `secao` (nome como aparece em
+    `listar_documentos` ou nos resultados de `buscar`) para ler só aquela seção, com as
+    subseções — bem mais barato que percorrer um documento grande parte a parte."""
+    return _ler_documento_texto(
+        caminho, _config["docs_normalizado"], _config["indice"], parte=parte, secao=secao
+    )
+
+
+@mcp.tool()
+def ler_trecho(chunk: int, vizinhos: int = 1) -> str:
+    """Devolve um trecho retornado por `buscar` (pelo número de chunk que aparece no
+    resultado) junto com os `vizinhos` trechos anteriores e seguintes do mesmo documento
+    (0 a 5, padrão 1). Use quando o trecho da busca parece cortado ou precisa do
+    contexto em volta: é bem mais barato que `ler_documento`. Trechos consecutivos se
+    sobrepõem um pouco nas bordas."""
+    return _ler_trecho_texto(_config["indice"], chunk, vizinhos)
 
 
 def main(

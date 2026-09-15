@@ -445,6 +445,27 @@ def atualizar_indice(
     return camada_removida
 
 
+def obter_trechos(conexao: sqlite3.Connection, chunk_id: int, vizinhos: int = 1) -> tuple[list[dict], int]:
+    """O chunk `chunk_id` e até `vizinhos` chunks antes e depois dele no mesmo documento,
+    em ordem. Devolve (trechos, total de chunks do documento); ([], 0) se o id não existe."""
+    colunas = ["id", *_CAMPOS]
+    selecao = f"SELECT rowid AS id, {', '.join(_CAMPOS)} FROM chunks"
+    linha = conexao.execute(f"{selecao} WHERE rowid = ?", (chunk_id,)).fetchone()
+    if linha is None:
+        return [], 0
+    alvo = dict(zip(colunas, linha))
+    ordem = int(alvo["ordem"])
+    linhas = conexao.execute(
+        f"{selecao} WHERE caminho_origem = ? AND CAST(ordem AS INTEGER) BETWEEN ? AND ? "
+        "ORDER BY CAST(ordem AS INTEGER)",
+        (alvo["caminho_origem"], ordem - vizinhos, ordem + vizinhos),
+    ).fetchall()
+    total = conexao.execute(
+        "SELECT COUNT(*) FROM chunks WHERE caminho_origem = ?", (alvo["caminho_origem"],)
+    ).fetchone()[0]
+    return [dict(zip(colunas, l)) for l in linhas], total
+
+
 def _sem_acentos(texto: str) -> str:
     forma = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in forma if not unicodedata.combining(c)).lower()

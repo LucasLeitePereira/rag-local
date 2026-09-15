@@ -176,16 +176,27 @@ um proxy com autenticação antes (ver "Fase futura" em
 `docs/ARQUITETURA.md`). Se a máquina usa IP dinâmico (DHCP), o endereço pode
 mudar a cada reinício — configure IP fixo se isso incomodar.
 
-## As três ferramentas (tools)
+## As quatro ferramentas (tools)
 
 | Tool | Quando o agente deve chamar |
 |---|---|
 | `listar_documentos()` | Não sabe o que existe na documentação, ou uma busca não retornou nada útil. |
 | `buscar(consulta, limite=5, documento=None)` | Antes de responder qualquer pergunta sobre o projeto — sempre, em vez de responder de memória. |
-| `ler_documento(caminho)` | O trecho de `buscar` não trouxe contexto suficiente. |
+| `ler_trecho(chunk, vizinhos=1)` | Um trecho de `buscar` parece cortado ou precisa do texto em volta. Barato. |
+| `ler_documento(caminho, parte=1, secao=None)` | Precisa de uma seção inteira ou do documento todo. |
 
 Todas retornam **texto legível**, nunca JSON cru — pensado para ser lido
 diretamente pelo agente e citado ao usuário, sempre com o caminho de origem.
+Resultados de PDF trazem a página (`p. 12` ou `pp. 12–13`).
+
+**Leitura econômica.** Cada resultado de `buscar` traz o número do chunk:
+`ler_trecho(chunk)` devolve esse trecho com os `vizinhos` anteriores e seguintes
+do mesmo documento (0 a 5). `ler_documento` com `secao` devolve só aquela seção,
+com as subseções. Documentos maiores que `LIMITE_CARACTERES_LEITURA` (env, padrão
+20 000 caracteres, ≈ 5 000 tokens) saem em partes: a resposta começa com
+"parte X de N" e termina com a chamada exata para a parte seguinte. Antes, o
+livro do corpus local (mais de 1 milhão de caracteres) voltava inteiro numa
+chamada só.
 
 **`documento`** restringe a busca a um único arquivo (caminho completo, parcial
 ou só o nome) — use quando já se sabe, por `listar_documentos` ou por uma
