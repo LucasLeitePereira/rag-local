@@ -39,12 +39,32 @@ dois problemas que, misturados, são difíceis de depurar juntos: "a extração
 saiu ruim" vs. "a busca não encontrou o trecho certo". Também dá a uma
 pessoa (não só ao agente) um jeito de ler a documentação diretamente.
 
-### Reindexação completa, não incremental
+### Ingestão incremental por sha256
 
-Com centenas de arquivos a reindexação completa leva segundos. Indexação
-incremental (detectar o que mudou, atualizar só isso) é uma otimização real,
-mas prematura aqui — o custo de manter dois caminhos de indexação (completo e
-incremental) sincronizados supera o tempo que ela economizaria neste estágio.
+A decisão original era reindexar tudo a cada ingestão. Deixou de valer com PDFs
+grandes: com embeddings em CPU, o corpus local (11 documentos, ~6 mil chunks)
+levava ~35 minutos, e o `docserver watch` repetia isso a cada arquivo copiado.
+
+Hoje a tabela `arquivos` registra, por origem, o sha256, o tamanho, o número de
+chunks, o extrator e a data. A ingestão calcula o sha256 de cada arquivo
+suportado (dezenas de ms para um PDF de 16 MB) e classifica:
+
+- **inalterado** (hash igual e `.md` normalizado presente): não extrai nem embedda;
+- **novo ou alterado**: extrai, divide e embedda só ele;
+- **removido** (indexado, mas não mantido nem reprocessado): sai do índice.
+
+O hash, e não o `mtime`, decide porque a cópia no Windows preserva o `mtime` e
+restaurar um backup antigo não o avança. Há **um único caminho de gravação**
+(`index.atualizar_indice`): a reconstrução completa é o mesmo fluxo com todos os
+arquivos tratados como novos e o esquema recriado antes. Ela acontece com índice
+em formato antigo, modelo de embeddings diferente do registrado (que antes dava
+`ErroModeloDivergente` e exigia `--limpar`) ou chunks sem vetor numa ingestão com
+embeddings.
+
+A gravação é uma transação só (`BEGIN IMMEDIATE`, `rollback` em qualquer erro):
+apaga chunks, vetores e registros das origens alteradas e removidas, insere os
+novos e grava os registros. Os `.md` órfãos só são apagados depois do commit. As
+proteções contra esvaziar o índice usam o total final (chunks mantidos + novos).
 
 ### Busca híbrida com Reciprocal Rank Fusion (RRF)
 
@@ -201,19 +221,19 @@ ainda presente em `docs-normalizado/` de uma ingestão anterior — que causou
 uma busca sobre um documento devolver trechos de outro completamente
 diferente.
 
-### Watcher como processo separado, disparando a ingestão completa
+### Watcher como processo separado, disparando a ingestão
 
 `docserver watch` (`src/docserver/watch.py`) observa `docs-fonte/` com o
 `watchdog`, agrupa os eventos por alguns segundos e chama o mesmo
 `executar_ingestao` do `docserver ingest`. Não existe caminho de indexação
-novo: todas as proteções e a remoção de órfãos valem igual, e a decisão de
-reindexação completa continua de pé.
+novo: todas as proteções, a remoção de órfãos e a ingestão incremental valem
+igual.
 
 Ele roda num processo próprio, e não como thread do servidor MCP, por três
 motivos: no transporte stdio o stdout é o canal do protocolo e não pode receber
 relatórios; o cálculo de embeddings de uma ingestão não disputa CPU e GIL com as
 buscas; e uma falha no watcher não derruba o servidor. A consistência entre os
-dois processos vem do SQLite: a troca dos chunks é uma única transação.
+dois processos vem do SQLite: a gravação da ingestão é uma única transação.
 
 ### Índice em modo WAL
 

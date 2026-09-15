@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 #   1 — sem versão gravada; caminhos indexados no FTS
 #   2 — caminhos UNINDEXED e pesos BM25 por coluna (TASK-008)
 #   3 — pagina_inicio / pagina_fim (TASK-006)
-VERSAO_ESQUEMA = 3
+#   4 — tabela `arquivos` para a ingestão incremental (TASK-005)
+VERSAO_ESQUEMA = 4
 
 # Os caminhos ficam UNINDEXED: continuam filtráveis (`caminho_origem = ?`) e
 # devolvidos na busca, mas as palavras deles não casam consultas — "api" no nome da
@@ -46,6 +47,22 @@ CREATE TABLE IF NOT EXISTS metadados_indice (
     valor TEXT
 );
 """
+
+# Um registro por arquivo de origem indexado: o sha256 decide, na próxima ingestão,
+# se o arquivo pode ser pulado (sem extrair nem gerar embeddings).
+_ESQUEMA_ARQUIVOS = """
+CREATE TABLE IF NOT EXISTS arquivos (
+    caminho_origem TEXT PRIMARY KEY,
+    caminho_normalizado TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    tamanho INTEGER NOT NULL,
+    chunks INTEGER NOT NULL,
+    extrator TEXT,
+    ingerido_em TEXT
+);
+"""
+
+_CAMPOS_ARQUIVO = ["caminho_origem", "caminho_normalizado", "sha256", "tamanho", "chunks", "extrator", "ingerido_em"]
 
 _CAMPOS = [
     "caminho_origem",
@@ -156,6 +173,7 @@ def _tabela_existe(conexao: sqlite3.Connection, nome: str) -> bool:
 def _criar_esquema(conexao: sqlite3.Connection) -> None:
     conexao.execute(_ESQUEMA)
     conexao.execute(_ESQUEMA_METADADOS)
+    conexao.execute(_ESQUEMA_ARQUIVOS)
     conexao.execute(
         "INSERT OR REPLACE INTO metadados_indice (chave, valor) VALUES ('versao_esquema', ?)",
         (str(VERSAO_ESQUEMA),),
@@ -196,6 +214,7 @@ def recriar_esquema(conexao: sqlite3.Connection) -> None:
         _carregar_extensao_vec(conexao)
         conexao.execute("DROP TABLE chunks_vec")
     conexao.execute("DROP TABLE IF EXISTS metadados_indice")
+    conexao.execute("DROP TABLE IF EXISTS arquivos")
     conexao.execute("DROP TABLE IF EXISTS chunks")
     _criar_esquema(conexao)
 
@@ -251,7 +270,6 @@ def _validar_ou_registrar_modelo(conexao: sqlite3.Connection, nome_modelo: str, 
         conexao.execute(
             "INSERT INTO metadados_indice (chave, valor) VALUES ('dimensao', ?)", (str(dimensao),)
         )
-        conexao.commit()
         return
 
     linha_dim = conexao.execute(
@@ -263,7 +281,7 @@ def _validar_ou_registrar_modelo(conexao: sqlite3.Connection, nome_modelo: str, 
         raise ErroModeloDivergente(
             f"o índice foi construído com o modelo '{modelo_salvo}' ({dimensao_salva}d), "
             f"mas o modelo atual é '{nome_modelo}' ({dimensao}d). "
-            "Reconstrua o índice com: docserver ingest --limpar"
+            "Rode 'docserver ingest': ele reconstrói o índice com o modelo atual."
         )
 
 
@@ -272,7 +290,10 @@ def indexar_chunks(
     chunks: list[dict],
     embeddings: list[list[float]] | None = None,
     nome_modelo: str | None = None,
+    commit: bool = True,
 ) -> None:
+    """Insere chunks (e vetores). `commit=False` deixa a gravação dentro da transação
+    de quem chama (ver `atualizar_indice`)."""
     if embeddings is not None and len(embeddings) != len(chunks):
         raise ValueError("embeddings deve ter o mesmo tamanho que chunks")
 
@@ -296,7 +317,8 @@ def indexar_chunks(
                 (cursor.lastrowid, sqlite_vec.serialize_float32(embeddings[i])),
             )
 
-    conexao.commit()
+    if commit:
+        conexao.commit()
 
 
 def remover_camada_vetorial(conexao: sqlite3.Connection) -> bool:
@@ -335,6 +357,91 @@ def reindexar(
         _carregar_extensao_vec(conexao)
         conexao.execute("DELETE FROM chunks_vec")
     indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo=nome_modelo)
+    return camada_removida
+
+
+def modelo_registrado(conexao: sqlite3.Connection) -> str | None:
+    """Nome do modelo de embeddings gravado no índice, ou None sem camada vetorial."""
+    if not _tabela_existe(conexao, "metadados_indice"):
+        return None
+    linha = conexao.execute("SELECT valor FROM metadados_indice WHERE chave = 'modelo'").fetchone()
+    return linha[0] if linha else None
+
+
+def chunks_sem_vetor(conexao: sqlite3.Connection) -> int:
+    """Quantos chunks não têm vetor (todos, se não há camada vetorial)."""
+    total = conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    if not _tabela_vetorial_existe(conexao):
+        return total
+    _carregar_extensao_vec(conexao)
+    return total - conexao.execute("SELECT COUNT(*) FROM chunks_vec").fetchone()[0]
+
+
+def arquivos_registrados(conexao: sqlite3.Connection) -> dict[str, dict]:
+    """{caminho_origem: registro} dos arquivos indexados; vazio em índice de formato antigo."""
+    if verificar_esquema(conexao) or not _tabela_existe(conexao, "arquivos"):
+        return {}
+    cursor = conexao.execute(f"SELECT {', '.join(_CAMPOS_ARQUIVO)} FROM arquivos")
+    return {linha[0]: dict(zip(_CAMPOS_ARQUIVO, linha)) for linha in cursor.fetchall()}
+
+
+def origens_indexadas(conexao: sqlite3.Connection) -> set[str]:
+    """Origens com chunks no índice ou registradas em `arquivos` (inclui as sem chunks)."""
+    origens = {linha[0] for linha in conexao.execute("SELECT DISTINCT caminho_origem FROM chunks")}
+    if _tabela_existe(conexao, "arquivos"):
+        origens |= {linha[0] for linha in conexao.execute("SELECT caminho_origem FROM arquivos")}
+    return origens
+
+
+def atualizar_indice(
+    conexao: sqlite3.Connection,
+    chunks: list[dict],
+    registros: list[dict],
+    remover_origens: list[str],
+    embeddings: list[list[float]] | None = None,
+    nome_modelo: str | None = None,
+    reconstruir: bool = False,
+) -> bool:
+    """Gravação da ingestão incremental numa única transação: apaga chunks, vetores e
+    registros das origens em `remover_origens` e das reprocessadas (as de `registros`),
+    insere os chunks novos e grava os registros. Um erro no meio desfaz tudo — leitores
+    (WAL) continuam vendo o índice anterior.
+
+    `embeddings=None` significa ingestão sem embeddings: a camada vetorial é removida
+    (devolve True se havia uma). Com `reconstruir` (ou índice em formato antigo), o
+    esquema é recriado do zero antes da gravação."""
+    if conexao.in_transaction:
+        conexao.commit()
+    conexao.execute("BEGIN IMMEDIATE")
+    try:
+        if reconstruir or verificar_esquema(conexao):
+            recriar_esquema(conexao)
+
+        vetorial = _tabela_vetorial_existe(conexao)
+        if vetorial:
+            _carregar_extensao_vec(conexao)
+        origens = set(remover_origens) | {r["caminho_origem"] for r in registros}
+        for origem in sorted(origens):
+            ids = [
+                linha[0]
+                for linha in conexao.execute("SELECT rowid FROM chunks WHERE caminho_origem = ?", (origem,))
+            ]
+            if vetorial:
+                conexao.executemany("DELETE FROM chunks_vec WHERE chunk_id = ?", [(i,) for i in ids])
+            conexao.execute("DELETE FROM chunks WHERE caminho_origem = ?", (origem,))
+            conexao.execute("DELETE FROM arquivos WHERE caminho_origem = ?", (origem,))
+
+        camada_removida = remover_camada_vetorial(conexao) if embeddings is None else False
+        indexar_chunks(conexao, chunks, embeddings=embeddings or None, nome_modelo=nome_modelo, commit=False)
+        conexao.executemany(
+            f"INSERT INTO arquivos ({', '.join(_CAMPOS_ARQUIVO)}) "
+            f"VALUES ({', '.join(':' + c for c in _CAMPOS_ARQUIVO)})",
+            registros,
+        )
+        conexao.commit()
+    except BaseException:
+        conexao.rollback()
+        raise
     return camada_removida
 
 

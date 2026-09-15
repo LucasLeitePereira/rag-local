@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 import time
 from pathlib import Path
@@ -84,6 +85,30 @@ def limpar_saidas(docs_normalizado: Path, caminho_indice: str) -> list[str]:
     return removidos
 
 
+def _sha256(caminho: Path) -> str:
+    resumo = hashlib.sha256()
+    with caminho.open("rb") as arquivo:
+        for bloco in iter(lambda: arquivo.read(1 << 20), b""):
+            resumo.update(bloco)
+    return resumo.hexdigest()
+
+
+def _motivo_reconstrucao(conexao, sem_embeddings: bool, nome_modelo: str | None) -> str | None:
+    """Por que a ingestão precisa reprocessar todos os arquivos, ou None se pode ser
+    incremental."""
+    if index.verificar_esquema(conexao):
+        return f"índice em formato antigo (versão {index.versao_esquema(conexao)})"
+    if sem_embeddings:
+        return None
+    modelo_atual = nome_modelo or embed.NOME_MODELO
+    modelo_salvo = index.modelo_registrado(conexao)
+    if modelo_salvo is not None and modelo_salvo != modelo_atual:
+        return f"modelo de embeddings trocado ({modelo_salvo} → {modelo_atual})"
+    if index.chunks_sem_vetor(conexao) > 0:
+        return "há chunks sem embeddings"
+    return None
+
+
 def executar_ingestao(
     docs_fonte: Path,
     docs_normalizado: Path,
@@ -93,19 +118,31 @@ def executar_ingestao(
     nome_modelo: str | None = None,
     forcar: bool = False,
 ) -> dict:
-    """Pipeline completo. Levanta `ErroIngestao` — sem tocar em docs-normalizado nem
-    no índice — se `docs_fonte` não existe, ou (a menos que `forcar`) se não há nenhum
-    arquivo suportado ou se o resultado esvaziaria um índice que tinha conteúdo."""
+    """Pipeline incremental. Só extrai, divide e gera embeddings dos arquivos novos ou
+    alterados (sha256 diferente do registrado no índice); os inalterados ficam como
+    estão, e os que sumiram da fonte (ou passaram a falhar na extração) saem do índice.
+    Reprocessa tudo quando o índice está em formato antigo, o modelo de embeddings
+    mudou ou há chunks sem vetor numa ingestão com embeddings.
+
+    Levanta `ErroIngestao` — sem tocar no índice — se `docs_fonte` não existe, ou (a
+    menos que `forcar`) se não há nenhum arquivo suportado ou se o resultado
+    esvaziaria um índice que tinha conteúdo."""
     validar_docs_fonte(docs_fonte)
     inicio = time.perf_counter()
     relatorio = {
         "processados": 0,
+        "novos": [],
+        "alterados": [],
+        "inalterados": 0,
+        "documentos_removidos": [],
         "chunks": 0,
+        "chunks_novos": 0,
         "ignorados": [],
         "falhas": [],
         "suspeitos": [],
         "removidos": [],
         "preservados": [],
+        "reconstrucao": None,
     }
 
     suportados: list[Path] = []
@@ -123,60 +160,109 @@ def executar_ingestao(
             "Nada foi alterado; use --forcar se a intenção é mesmo esvaziar o índice."
         )
 
-    todos_chunks: list[dict] = []
-    gerados: set[Path] = set()
-    destinos: dict[str, Path] = {}
-    for caminho in suportados:
-        destino = extract.caminho_normalizado_para(caminho, docs_fonte, docs_normalizado)
-        # em sistemas de arquivos que ignoram maiúsculas, `Guia.md` e `guia.md` de
-        # pastas espelhadas cairiam no mesmo arquivo — o segundo sobrescreveria o primeiro.
-        chave = str(destino.resolve()).casefold()
-        if chave in destinos:
-            relatorio["falhas"].append(
-                (str(caminho), f"colide com {destinos[chave]} no mesmo arquivo normalizado ({destino})")
+    conexao = index.criar_indice(caminho_indice)
+    try:
+        relatorio["reconstrucao"] = _motivo_reconstrucao(conexao, sem_embeddings, nome_modelo)
+        registrados = {} if relatorio["reconstrucao"] else index.arquivos_registrados(conexao)
+        chunks_atuais = conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+        novos_chunks: list[dict] = []
+        registros: list[dict] = []
+        mantidas: set[str] = set()
+        chunks_mantidos = 0
+        gerados: set[Path] = set()
+        destinos: dict[str, Path] = {}
+        for caminho in suportados:
+            destino = extract.caminho_normalizado_para(caminho, docs_fonte, docs_normalizado)
+            # em sistemas de arquivos que ignoram maiúsculas, `Guia.md` e `guia.md` de
+            # pastas espelhadas cairiam no mesmo arquivo — o segundo sobrescreveria o primeiro.
+            chave = str(destino.resolve()).casefold()
+            if chave in destinos:
+                relatorio["falhas"].append(
+                    (str(caminho), f"colide com {destinos[chave]} no mesmo arquivo normalizado ({destino})")
+                )
+                continue
+
+            origem = extract.origem_para(caminho, docs_fonte)
+            sha256 = _sha256(caminho)
+            registro = registrados.get(origem)
+            if registro and registro["sha256"] == sha256 and destino.is_file():
+                destinos[chave] = caminho
+                gerados.add(destino.resolve())
+                mantidas.add(origem)
+                chunks_mantidos += registro["chunks"]
+                relatorio["inalterados"] += 1
+                continue
+
+            try:
+                caminho_normalizado_arquivo = extract.normalizar(caminho, docs_fonte, docs_normalizado)
+            except Exception as erro:
+                relatorio["falhas"].append((str(caminho), str(erro)))
+                continue
+
+            destinos[chave] = caminho
+            gerados.add(caminho_normalizado_arquivo.resolve())
+            relatorio["processados"] += 1
+            relatorio["alterados" if registro else "novos"].append(str(caminho))
+            meta, corpo = extract.ler_front_matter(caminho_normalizado_arquivo.read_text(encoding="utf-8"))
+            if len(extract.remover_marcadores_pagina(corpo)) < MIN_CARACTERES_SUSPEITO:
+                relatorio["suspeitos"].append(str(caminho))
+
+            chunks_arquivo = chunk.chunkar_arquivo(caminho_normalizado_arquivo, docs_normalizado)
+            novos_chunks.extend(chunks_arquivo)
+            registros.append(
+                {
+                    "caminho_origem": origem,
+                    "caminho_normalizado": caminho_normalizado_arquivo.resolve()
+                    .relative_to(Path(docs_normalizado).resolve())
+                    .as_posix(),
+                    "sha256": sha256,
+                    "tamanho": caminho.stat().st_size,
+                    "chunks": len(chunks_arquivo),
+                    "extrator": meta.get("extrator"),
+                    "ingerido_em": meta.get("ingerido_em"),
+                }
             )
-            continue
-        try:
-            caminho_normalizado_arquivo = extract.normalizar(caminho, docs_fonte, docs_normalizado)
-        except Exception as erro:
-            relatorio["falhas"].append((str(caminho), str(erro)))
-            continue
 
-        destinos[chave] = caminho
-        gerados.add(caminho_normalizado_arquivo.resolve())
-        relatorio["processados"] += 1
-        conteudo = caminho_normalizado_arquivo.read_text(encoding="utf-8")
-        _, corpo = extract.ler_front_matter(conteudo)
-        if len(extract.remover_marcadores_pagina(corpo)) < MIN_CARACTERES_SUSPEITO:
-            relatorio["suspeitos"].append(str(caminho))
+        total_final = chunks_mantidos + len(novos_chunks)
+        if total_final == 0 and not forcar and chunks_atuais > 0:
+            raise ErroIngestao(
+                "a ingestão não gerou nenhum chunk e substituiria um índice que tem conteúdo. "
+                "Índice e docs-normalizado foram mantidos; use --forcar se a intenção é mesmo esvaziá-lo."
+            )
 
-        todos_chunks.extend(chunk.chunkar_arquivo(caminho_normalizado_arquivo, docs_normalizado))
+        reprocessadas = {r["caminho_origem"] for r in registros}
+        # origens no índice que não foram mantidas nem reprocessadas: fonte apagada,
+        # renomeada ou que passou a falhar na extração
+        relatorio["documentos_removidos"] = sorted(index.origens_indexadas(conexao) - mantidas - reprocessadas)
 
-    if not todos_chunks and not forcar and index.contar_chunks(caminho_indice) > 0:
-        raise ErroIngestao(
-            "a ingestão não gerou nenhum chunk e substituiria um índice que tem conteúdo. "
-            "Índice e docs-normalizado foram mantidos; use --forcar se a intenção é mesmo esvaziá-lo."
+        embeddings = None
+        if not sem_embeddings:
+            if embeddar_passagem_fn is not None:
+                embeddings = [embeddar_passagem_fn(c) for c in novos_chunks]
+            else:
+                embeddings = embed.embeddar_passagens(novos_chunks) if novos_chunks else []
+
+        relatorio["camada_vetorial_removida"] = index.atualizar_indice(
+            conexao,
+            novos_chunks,
+            registros,
+            relatorio["documentos_removidos"],
+            embeddings=embeddings,
+            nome_modelo=nome_modelo,
+            reconstruir=bool(relatorio["reconstrucao"]),
         )
+    finally:
+        conexao.close()
 
     # arquivos normalizados cuja fonte original sumiu (foi apagada, renomeada, ou
     # passou a falhar na extração) não devem continuar servíveis nem aparecer na
-    # listagem — é exatamente o que causava respostas misturando documentos.
+    # listagem — é exatamente o que causava respostas misturando documentos. Só
+    # depois do commit: se a gravação falhar, o índice anterior ainda os referencia.
     relatorio["removidos"], relatorio["preservados"] = _remover_gerados(docs_normalizado, gerados)
 
-    embeddings = None
-    if not sem_embeddings and todos_chunks:
-        if embeddar_passagem_fn is not None:
-            embeddings = [embeddar_passagem_fn(c) for c in todos_chunks]
-        else:
-            embeddings = embed.embeddar_passagens(todos_chunks)
-
-    conexao = index.criar_indice(caminho_indice)
-    relatorio["camada_vetorial_removida"] = index.reindexar(
-        conexao, todos_chunks, embeddings=embeddings, nome_modelo=nome_modelo
-    )
-    conexao.close()
-
-    relatorio["chunks"] = len(todos_chunks)
+    relatorio["chunks"] = total_final
+    relatorio["chunks_novos"] = len(novos_chunks)
     relatorio["tempo"] = time.perf_counter() - inicio
     return relatorio
 
@@ -185,13 +271,28 @@ def formatar_relatorio(relatorio: dict) -> str:
     linhas = [
         f"Ingestão concluída em {relatorio['tempo']:.1f}s",
         "",
-        f"  Arquivos processados:   {relatorio['processados']}",
-        f"  Chunks indexados:      {relatorio['chunks']}",
+        f"  Novos:                   {len(relatorio['novos'])}",
+        f"  Alterados:               {len(relatorio['alterados'])}",
+        f"  Inalterados (pulados):   {relatorio['inalterados']}",
+        f"  Removidos do índice:     {len(relatorio['documentos_removidos'])}",
+        f"  Chunks indexados:        {relatorio['chunks']} ({relatorio['chunks_novos']} novos)",
         f"  Ignorados (formato):     {len(relatorio['ignorados'])}",
         f"  Falhas de extração:      {len(relatorio['falhas'])}",
         f"  Suspeitos (texto vazio): {len(relatorio['suspeitos'])}",
         f"  Removidos (órfãos):      {len(relatorio['removidos'])}",
     ]
+    if relatorio.get("reconstrucao"):
+        linhas.append("")
+        linhas.append(f"Índice reconstruído do zero: {relatorio['reconstrucao']}.")
+    for rotulo, chave in (("Novos", "novos"), ("Alterados", "alterados")):
+        if relatorio[chave]:
+            linhas.append("")
+            linhas.append(f"{rotulo}:")
+            linhas.extend(f"  + {caminho}" for caminho in relatorio[chave])
+    if relatorio["documentos_removidos"]:
+        linhas.append("")
+        linhas.append("Removidos do índice:")
+        linhas.extend(f"  - {origem}" for origem in relatorio["documentos_removidos"])
     if relatorio.get("camada_vetorial_removida"):
         linhas.append("")
         linhas.append(

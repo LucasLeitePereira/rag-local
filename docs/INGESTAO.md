@@ -9,10 +9,23 @@ pastas — ela é espelhada em `docs-normalizado/`. Depois rode:
 docserver ingest
 ```
 
-O comando reindexa **tudo** do zero a cada execução: não existe indexação
-incremental (ver `docs/ARQUITETURA.md`). Rode de novo sempre que adicionar,
-editar ou remover arquivos em `docs-fonte/`, ou deixe `docserver watch`
-fazendo isso sozinho (ver "Ingestão automática" abaixo).
+A ingestão é **incremental**: cada arquivo tem o sha256 registrado no índice
+(tabela `arquivos`), e só os novos ou alterados são extraídos, divididos e
+embeddados. Os inalterados são pulados, e os que sumiram de `docs-fonte/` saem do
+índice. Rodar de novo sem mudanças leva segundos. Rode sempre que adicionar,
+editar ou remover arquivos em `docs-fonte/`, ou deixe `docserver watch` fazendo
+isso sozinho (ver "Ingestão automática" abaixo).
+
+A ingestão reprocessa **todos** os arquivos, e o relatório avisa "Índice
+reconstruído do zero", quando:
+
+- o índice está num formato antigo (versão anterior do docserver);
+- o modelo de embeddings registrado no índice é diferente do atual;
+- a ingestão é com embeddings e o índice tem chunks sem vetor (por exemplo,
+  depois de uma ingestão com `--sem-embeddings`).
+
+A gravação é uma única transação: se algo falhar no meio, o índice anterior fica
+intacto. Para forçar o reprocessamento de tudo, use `--limpar`.
 
 **Remover um arquivo de `docs-fonte/` e rodar `docserver ingest` já basta** —
 a ingestão apaga automaticamente o `.md` correspondente em
@@ -26,7 +39,7 @@ busca sobre um documento misturar trechos de outro completamente diferente.
 Flags úteis:
 
 ```bash
-docserver ingest --limpar           # remove os .md gerados pelo docserver e esvazia o índice antes de reingerir
+docserver ingest --limpar           # remove os .md gerados e esvazia o índice: reprocessa tudo
 docserver ingest --sem-embeddings   # pula a camada vetorial — ingestão bem mais rápida em dev
 docserver ingest --forcar           # permite esvaziar o índice (ver "Proteções contra perda de dados")
 ```
@@ -86,8 +99,8 @@ Ingestão concluída em 3.8s
 
 Como funciona:
 
-- **Ingestão inicial.** Ao subir, o watcher roda uma ingestão completa para
-  pegar o que mudou enquanto ele estava desligado.
+- **Ingestão inicial.** Ao subir, o watcher roda uma ingestão para pegar o que
+  mudou enquanto ele estava desligado (incremental: sem mudanças, é rápida).
 - **Agrupamento.** Copiar uma pasta ou salvar um `.docx` gera dezenas de
   eventos. O watcher espera `--espera` segundos (padrão 2) sem nenhum evento
   novo e roda **uma** ingestão. Mudanças feitas enquanto uma ingestão roda
@@ -97,7 +110,7 @@ Como funciona:
   (`~$algo.docx`). Mudanças em pastas vazias ou em formatos não suportados não
   disparam nada.
 - **Mesmo pipeline.** Cada disparo é exatamente um `docserver ingest`
-  (reindexação completa, remoção de órfãos e todas as proteções da seção
+  (incremental, com remoção de órfãos e todas as proteções da seção
   anterior). Se uma ingestão aborta ou falha, o erro é registrado e o watcher
   continua observando; a próxima mudança tenta de novo.
 - **Embeddings em cache.** O modelo é carregado uma vez no processo do watcher,
@@ -181,12 +194,25 @@ Office (`~$arquivo.docx`) também são ignorados silenciosamente.
 ```
 Ingestão concluída em 4.2s
 
-  Arquivos processados:   38
-  Chunks indexados:      412
+  Novos:                   2
+  Alterados:               1
+  Inalterados (pulados):   35
+  Removidos do índice:     1
+  Chunks indexados:        412 (37 novos)
   Ignorados (formato):     3
   Falhas de extração:      1
   Suspeitos (texto vazio): 2
   Removidos (órfãos):      1
+
+Novos:
+  + docs-fonte/api/webhooks.md
+  + docs-fonte/manuais/instalacao.pdf
+
+Alterados:
+  + docs-fonte/api/contratos.md
+
+Removidos do índice:
+  - docs-fonte/legado/contrato-antigo.pdf
 
 Falhas:
   ✗ docs-fonte/antigo/manual.doc — formato .doc não suportado (converta para .docx)
@@ -198,6 +224,13 @@ Removidos (fonte original não existe mais):
   - docs-normalizado/legado/contrato-antigo.pdf.md
 ```
 
+- **Novos / Alterados** — arquivos extraídos e indexados nesta execução (sem
+  registro no índice, ou com sha256 diferente do registrado). Um `.md`
+  normalizado apagado à mão também faz o arquivo contar como alterado.
+- **Inalterados** — mesmo sha256 da ingestão anterior: nem extraídos nem
+  embeddados; os chunks continuam os mesmos.
+- **Removidos do índice** — origens que estavam indexadas e não foram mantidas
+  nem reprocessadas: a fonte sumiu ou passou a falhar na extração.
 - **Ignorados** — extensão sem extrator registrado. Converta o arquivo para
   um formato suportado, ou registre um extrator novo (veja abaixo).
 - **Falhas** — o extrator foi chamado mas levantou uma exceção (arquivo

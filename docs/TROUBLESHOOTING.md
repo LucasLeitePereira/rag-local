@@ -5,7 +5,8 @@
 1. Rode `docserver stats` — se `Chunks indexados: 0`, a ingestão não rodou
    ou não encontrou nenhum arquivo suportado em `docs-fonte/`.
 2. Rode `docserver ingest` de novo e confira o relatório: os arquivos que
-   você espera aparecem em "Arquivos processados", não em "Ignorados"?
+   você espera aparecem em "Novos", "Alterados" ou "Inalterados", não em
+   "Ignorados" ou "Falhas"?
 3. Tente `docserver search "termo" --modo lexico` e depois `--modo vetorial`
    separadamente — se um dos dois encontra e o outro não, o problema está
    isolado a uma das duas camadas.
@@ -53,7 +54,8 @@ só os resultados da busca léxica (BM25). O motivo vem entre parênteses:
   instalada. Instale-a (ver README) ou reingira com `--sem-embeddings` para
   remover a camada vetorial de vez.
 - **"o índice foi construído com o modelo ..."**: o índice foi gerado com
-  outro modelo de embeddings. Reconstrua com `docserver ingest --limpar`.
+  outro modelo de embeddings. Rode `docserver ingest`: ao notar o modelo
+  diferente, a ingestão reconstrói o índice inteiro.
 - **Erro do sqlite-vec**: a extensão não carregou nesta máquina; reinstale as
   dependências.
 

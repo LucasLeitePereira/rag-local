@@ -211,6 +211,11 @@ def caminho_normalizado_para(caminho_origem: Path, docs_fonte: Path, docs_normal
     return docs_normalizado / caminho_relativo.with_name(caminho_relativo.name + ".md")
 
 
+def origem_para(caminho_origem: Path, docs_fonte: Path) -> str:
+    """Valor de `origem` no front matter e de `caminho_origem` no índice."""
+    return f"docs-fonte/{caminho_origem.relative_to(docs_fonte).as_posix()}"
+
+
 def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -> Path:
     """Extrai `caminho_origem` e grava o Markdown normalizado com front matter
     (destino definido por `caminho_normalizado_para`)."""
@@ -218,11 +223,10 @@ def normalizar(caminho_origem: Path, docs_fonte: Path, docs_normalizado: Path) -
     if texto is None:
         raise ValueError(f"formato não suportado: {caminho_origem.suffix}")
 
-    caminho_relativo = caminho_origem.relative_to(docs_fonte)
     caminho_saida = caminho_normalizado_para(caminho_origem, docs_fonte, docs_normalizado)
     caminho_saida.parent.mkdir(parents=True, exist_ok=True)
 
-    origem_str = f"docs-fonte/{caminho_relativo.as_posix()}"
+    origem_str = origem_para(caminho_origem, docs_fonte)
     extrator = EXTRATORES[caminho_origem.suffix.lower()].__name__
     if caminho_origem.suffix.lower() == ".pdf":
         extrator = _ultimo_extrator_pdf
