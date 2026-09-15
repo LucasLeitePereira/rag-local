@@ -215,6 +215,21 @@ relatórios; o cálculo de embeddings de uma ingestão não disputa CPU e GIL co
 buscas; e uma falha no watcher não derruba o servidor. A consistência entre os
 dois processos vem do SQLite: a troca dos chunks é uma única transação.
 
+### Índice em modo WAL
+
+`index.criar_indice` liga `PRAGMA journal_mode=WAL` e abre a conexão com
+timeout de 30 s. Com o journal padrão, enquanto a ingestão (outro processo)
+confirmava a transação final, as leituras do servidor ficavam bloqueadas, e
+uma busca que esperasse mais que o timeout falhava com `database is locked`.
+Em WAL, os leitores continuam vendo o índice anterior até o commit e passam a
+ver o novo na consulta seguinte.
+
+Consequências: ao lado de `data/indice.db` aparecem `indice.db-wal` e
+`indice.db-shm` enquanto há conexões abertas (já cobertos pelo `.gitignore` de
+`data/`), e o arquivo não deve ficar numa pasta de rede (NFS/SMB), onde o SQLite
+não garante a memória compartilhada do WAL. Para copiar o índice, pare servidor
+e ingestão antes, ou copie os três arquivos juntos.
+
 ## Fase futura
 
 Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):

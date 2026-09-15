@@ -93,6 +93,32 @@ def test_reindexar_com_vetores_em_conexao_nova_nao_falha(tmp_path):
     segunda.close()
 
 
+def test_indice_em_arquivo_usa_wal_e_leitor_nao_bloqueia_durante_gravacao(tmp_path):
+    caminho = str(tmp_path / "indice.db")
+    escritor = index.criar_indice(caminho)
+    index.indexar_chunks(escritor, [_chunk(texto="Conteúdo antigo sobre faturamento.")])
+    assert escritor.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+    leitor = index.criar_indice(caminho)
+    try:
+        # gravação em andamento (transação aberta, como o reindexar da ingestão)
+        escritor.execute("DELETE FROM chunks")
+        escritor.execute(
+            "INSERT INTO chunks (caminho_origem, texto) VALUES ('docs-fonte/novo.md', 'Conteúdo novo sobre cobrança.')"
+        )
+        assert escritor.in_transaction
+
+        assert len(index.buscar(leitor, "faturamento")) == 1
+        assert index.buscar(leitor, "cobrança") == []
+
+        escritor.commit()
+        assert index.buscar(leitor, "faturamento") == []
+        assert len(index.buscar(leitor, "cobrança")) == 1
+    finally:
+        leitor.close()
+        escritor.close()
+
+
 def test_limite_restringe_a_quantidade_de_resultados(conn):
     chunks = [_chunk(ordem=i, texto=f"Chunk número {i} fala sobre relatórios.") for i in range(10)]
     index.indexar_chunks(conn, chunks)

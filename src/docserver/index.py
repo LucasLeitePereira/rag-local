@@ -43,6 +43,8 @@ _TOKEN_FTS = re.compile(r"[^\W_]+", re.UNICODE)
 
 K_RRF_PADRAO = 60
 
+TIMEOUT_CONEXAO_S = 30.0
+
 # Fração mínima (0-1) do peso IDF dos termos da consulta que um resultado precisa
 # cobrir para entrar na busca híbrida só pelo lado léxico (ver `_relevante`). Com
 # 0.5, "rate limit da API" num corpus onde "API" é comum descarta chunks que só têm
@@ -83,8 +85,16 @@ def criar_indice(caminho: str, compartilhada: bool = False) -> sqlite3.Connectio
     """Abre (ou cria) o banco de índice em `caminho` (use ':memory:' para testes).
 
     `compartilhada=True` libera o uso da conexão a partir de outras threads — o
-    servidor mantém uma única conexão por processo e serializa o acesso com um lock."""
-    conexao = sqlite3.connect(caminho, check_same_thread=not compartilhada)
+    servidor mantém uma única conexão por processo e serializa o acesso com um lock.
+
+    O journal fica em WAL: com o journal padrão, a gravação final de uma ingestão
+    (feita por outro processo, como o `docserver watch`) bloqueava as leituras do
+    servidor, e uma busca que esperasse mais que o timeout falhava com
+    "database is locked". Em WAL, leitores continuam vendo o índice anterior até o
+    commit. O modo é persistente no arquivo; o timeout cobre escritores concorrentes."""
+    conexao = sqlite3.connect(caminho, timeout=TIMEOUT_CONEXAO_S, check_same_thread=not compartilhada)
+    if caminho != ":memory:":
+        conexao.execute("PRAGMA journal_mode=WAL")
     conexao.execute(_ESQUEMA)
     conexao.commit()
     return conexao
