@@ -206,9 +206,12 @@ buscado; é a defesa direta contra o índice ter mais de um documento com
 vocabulário parecido (dois PDFs institucionais, por exemplo).
 
 `buscar` também aplica um corte mínimo de relevância antes de devolver
-resultados: um trecho só entra na resposta se a similaridade vetorial da
-consulta com ele for alta o bastante, ou se ele casou de fato na busca por
-termo exato (BM25) com algum termo relevante da pergunta. Uma resposta vazia
+resultados. Com o reranker (padrão na instalação com embeddings), o corte é a
+nota do cross-encoder, que lê a pergunta junto com cada trecho. Sem reranker,
+um trecho só entra se a similaridade vetorial da consulta com ele for alta o
+bastante, ou se casou de fato na busca por termo exato (BM25) com algum termo
+relevante da pergunta. O reranker deixa cada busca em ~3 s em CPU, e o agente
+não deve interpretar essa demora como falha. Uma resposta vazia
 é intencional — significa que
 nada no índice passou nesse corte — e não deve ser preenchida com uma
 resposta "de memória"; oriente o usuário a reformular a pergunta, restringir

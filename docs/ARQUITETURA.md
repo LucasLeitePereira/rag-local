@@ -89,7 +89,8 @@ distância L2 do índice vetorial, com os embeddings normalizados) passar de
 `SIMILARIDADE_MINIMA` (variável de ambiente, padrão 0.85). O mesmo corte vale
 quando não há índice vetorial (fallback BM25). Sem ele, uma busca híbrida
 "bem-sucedida" e uma busca que só achou lixo são indistinguíveis do lado do
-agente.
+agente. Com o reranker ligado (o padrão, ver "Reranker"), esse corte dá lugar
+ao `RERANK_MINIMO` sobre a nota do cross-encoder.
 
 A cobertura é ponderada por IDF (a mesma fórmula do BM25, calculada no escopo
 da busca), e termos que não aparecem em nenhum chunk saem do denominador. As
@@ -281,11 +282,47 @@ chunks do documento. Ajuste sem reindexar com `PESOS_BM25="secao=3,texto=1"`
 (colunas omitidas pesam 0). A cobertura léxica do corte de relevância também
 deixou de considerar os caminhos.
 
+### Reranker (cross-encoder)
+
+A fusão RRF ordena bem entre documentos, mas erra a ordem fina entre trechos
+parecidos, e o corte de relevância não sabe dizer "nada aqui serve". Por isso
+`buscar_hibrido` repontua os `N_CANDIDATOS_RERANK` (20) primeiros da fusão
+com um cross-encoder, que lê a consulta e o trecho juntos. Em seguida
+reordena os 20 pela nota (0–1, sigmoide dos logits) e descarta os que ficam
+abaixo de `RERANK_MINIMO`.
+
+- **Modelo:** env `RERANKER`, com padrão `mminilm`
+  (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, multilíngue, ~470 MB).
+  Também aceita `bge-m3` (`BAAI/bge-reranker-v2-m3`), qualquer id do Hugging
+  Face ou `desligado`.
+- **Corte:** env `RERANK_MINIMO`, padrão 0.01.
+- **Falhas:** se o modelo não carrega, a busca segue sem reranker e devolve
+  o aviso "reranker indisponível".
+- **Sem reranker numa busca:** `docserver search --sem-rerank`.
+
+Decisão pela avaliação no corpus local (ver números em "Avaliação de
+qualidade de busca"):
+
+- **mMiniLM:** leva o hit@1 do híbrido de 90% a 97%, o hit@5 de 92% a 97% e
+  o trecho@5 de 85% a 92%. No demo, o hit@1 vai de 90% a 95%. Custa ~3 s por
+  busca em CPU (4 threads), contra ~70 ms sem reranker.
+- **bge-m3:** levou ~35 s por busca na mesma máquina e estourou a RAM de 8 GB
+  antes de terminar o conjunto, mesmo com lotes de 8 pares. Descartado como
+  padrão para CPU; pode valer com GPU.
+- **`RERANK_MINIMO`:** as notas de acertos e de negativas se sobrepõem. Há
+  acertos reais com nota 0,02–0,05 e perguntas sem resposta com 0,10–0,47.
+  Por isso 0.01 é o maior corte que não perde nenhum acerto: esvazia 27% das
+  negativas do corpus local e 50% das do demo. Com 0.1, esvaziaria 82%, mas o
+  hit@5 cairia para 90% (e para 86% no demo). Prefira errar para o lado de
+  devolver algo: o agente ainda lê o trecho e decide.
+- **Pesos BM25 (TASK-008):** ficaram como estão. Com o reranker na frente, a
+  ordem da fusão só precisa pôr o acerto entre os 20 primeiros, e as 2
+  positivas que ainda erram no corpus local são pouco para calibrar pesos.
+
 ## Fase futura
 
 Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):
 
-- **Reranking com cross-encoder** — o próximo upgrade de qualidade de busca depois do híbrido.
 - **Expansão de consulta / perguntas sintéticas** — para melhorar recall em corpora grandes.
 - **Transporte HTTP com OAuth** — para servir múltiplos usuários/serviços remotos.
 - **Permissão por documento** — hoje qualquer agente conectado vê toda a documentação.
@@ -360,5 +397,29 @@ puro erra termos curtos sem significado semântico ("Retry-After",
 "LOG_LEVEL": 64% no demo), o que o BM25 corrige. O corte de relevância só
 esvazia 27% das negativas: a maioria das perguntas fora do corpus ainda
 devolve algo. São esses três pontos que TASK-008 (pesos BM25) e TASK-009
-(reranker) devem mover. Ao adotar este projeto, troque `docs-fonte/` e os
-conjuntos de perguntas pelos do seu projeto e meça de novo.
+(reranker) devem mover.
+
+### Depois de TASK-008/006/005 e do reranker
+
+Índice v4 reconstruído (11 documentos, 6 109 chunks), mesma máquina. As linhas
+`+mminilm` foram calculadas com o top-5 reranqueado de cada pergunta, aplicando
+cada corte:
+
+| conjunto | modo | hit@1 | hit@5 | MRR@5 | trecho@5 | neg vazio | ms/cons |
+|---|---|---|---|---|---|---|---|
+| corpus local | hibrido | 90% | 92% | 0.91 | 85% | 27% | 67 |
+| corpus local | +mminilm, corte 0 | 97% | 97% | 0.97 | 92% | 0% | ~3 300 |
+| corpus local | **+mminilm, corte 0.01** | **97%** | **97%** | **0.97** | **92%** | **27%** | ~3 300 |
+| corpus local | +mminilm, corte 0.1 | 90% | 90% | 0.90 | 84% | 82% | ~3 300 |
+| demo | hibrido | 90% | 100% | 0.94 | 100% | 0% | 69 |
+| demo | **+mminilm, corte 0.01** | **95%** | **100%** | **0.98** | **100%** | **50%** | ~3 000 |
+| demo | +mminilm, corte 0.1 | 81% | 86% | 0.83 | 89% | 75% | ~3 000 |
+
+O que mudou: TASK-008 (pesos BM25) melhorou o trecho@5 técnico do híbrido
+(88% → 94%) sem mexer no resto. O reranker resolveu dois dos três pontos da
+linha de base: o perfil natural passou a acertar mais que o vetorial puro
+(93% × 83% de hit@5), e o trecho certo aparece mais. As negativas continuam o
+ponto fraco: o corte que as esvaziaria custa acertos.
+
+Ao adotar este projeto, troque `docs-fonte/` e os conjuntos de perguntas pelos
+do seu projeto e meça de novo.

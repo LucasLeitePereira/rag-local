@@ -23,13 +23,17 @@ para uma fase futura.
 | Python | 3.11 ou superior | igual |
 | CPU | 2 núcleos | 2 núcleos (4 recomendado para ingerir muitos PDFs) |
 | RAM | 2 GB | 4 GB (8 GB recomendado) |
-| Disco livre | ~500 MB + seus documentos | ~2,5 GB + seus documentos |
+| Disco livre | ~500 MB + seus documentos | ~3 GB + seus documentos |
 | GPU | não usa | não precisa — roda em CPU |
-| Internet | só durante a instalação | instalação + primeiro `ingest` (baixa o modelo, ~470 MB) |
+| Internet | só durante a instalação | instalação + primeiro `ingest` e primeira busca (baixam os modelos, ~470 MB cada) |
 
-O disco extra da busca híbrida vem do PyTorch (versão CPU) e do modelo de
-embeddings `intfloat/multilingual-e5-small`. Os valores são estimativas —
-PDFs grandes aumentam o uso de memória durante a ingestão.
+O disco extra da busca híbrida vem do PyTorch (versão CPU), do modelo de
+embeddings `intfloat/multilingual-e5-small` e do reranker
+`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`. O reranker reordena os resultados
+e custa ~3 s por busca em CPU. Para buscas instantâneas com um pouco menos de
+precisão, use `RERANKER=desligado` (ver `docs/ARQUITETURA.md`, "Reranker").
+Os valores são estimativas: PDFs grandes aumentam o uso de memória durante a
+ingestão.
 
 Também é preciso um **cliente MCP** para usar o servidor com uma IA (Claude
 Code, Claude Desktop, VS Code com Copilot, Cursor, ...). Sem ele, a busca
@@ -410,6 +414,8 @@ DOCSERVER search "<um termo que aparece nos documentos>"
 
 - **Verificação:** `search` retorna ao menos um resultado com caminho de
   origem em `docs-fonte/`.
+- Na instalação com embeddings, a primeira `search` baixa o reranker (~470 MB).
+  Use timeout longo.
 
 ### Etapa 7 — configurar o MCP
 

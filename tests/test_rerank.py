@@ -130,13 +130,22 @@ def test_falha_ao_carregar_fica_em_cache(monkeypatch):
 
 def test_reranker_configurado_le_a_env(monkeypatch):
     monkeypatch.delenv("RERANKER", raising=False)
-    assert rerank.reranker_configurado() is None  # desligado até a calibração
+    assert rerank.reranker_configurado() == "mminilm"  # padrão escolhido pela avaliação
     monkeypatch.setenv("RERANKER", "mminilm")
     assert rerank.reranker_configurado() == "mminilm"
     monkeypatch.setenv("RERANKER", "Desligado")
     assert rerank.reranker_configurado() is None
     monkeypatch.setenv("RERANKER", "bge-m3")
     assert rerank.reranker_configurado() == "bge-m3"
+
+
+def test_instalacao_so_lexica_nao_liga_o_reranker_por_padrao(monkeypatch):
+    monkeypatch.setattr(rerank.importlib.util, "find_spec", lambda nome: None)
+    monkeypatch.delenv("RERANKER", raising=False)
+    assert rerank.reranker_configurado() is None
+    # pedido explícito continua valendo (e cai no aviso de indisponível na busca)
+    monkeypatch.setenv("RERANKER", "mminilm")
+    assert rerank.reranker_configurado() == "mminilm"
 
 
 def test_avaliacao_com_modo_de_reranker_usa_a_chave_do_modo(tmp_path, monkeypatch):

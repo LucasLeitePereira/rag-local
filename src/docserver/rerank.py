@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import os
 
@@ -13,21 +14,33 @@ MODELOS_RERANKER = {
     "bge-m3": "BAAI/bge-reranker-v2-m3",
 }
 RERANKER_PADRAO = "mminilm"
-# Desligado até a avaliação no corpus local escolher o modelo e calibrar
-# RERANK_MINIMO (TASK-009, pendente); ligue com RERANKER=mminilm ou RERANKER=bge-m3.
-RERANKER_ENV_PADRAO = "desligado"
+# Escolhido pela avaliação no corpus local (docs/ARQUITETURA.md, "Reranker"): o
+# mMiniLM leva o hit@1 de 90% a 97% com ~3 s por busca em CPU; o bge-m3 levou ~35 s
+# por busca e estourou a RAM de 8 GB. Desligue com RERANKER=desligado.
+RERANKER_ENV_PADRAO = RERANKER_PADRAO
 DESLIGADO = ("desligado", "nenhum", "0", "false", "")
 
 # Os dois modelos leem até 512 tokens por par (consulta + trecho); cortar o texto
 # antes evita tokenizar à toa a cauda que seria truncada de qualquer forma.
 MAX_CARACTERES_TRECHO = 2000
+# Pares por passada no modelo. O bge-m3 (XLM-R large, ~2,3 GB em fp32) com os 20
+# candidatos × 512 tokens numa passada só estourou a RAM de uma máquina de 8 GB.
+TAMANHO_LOTE = 8
 
 _cache: dict[str, object] = {}
 
 
 def reranker_configurado() -> str | None:
-    """Chave (ou id do Hugging Face) do reranker da env `RERANKER`, ou None se desligado."""
-    valor = os.environ.get("RERANKER", RERANKER_ENV_PADRAO).strip()
+    """Chave (ou id do Hugging Face) do reranker da env `RERANKER`, ou None se desligado.
+
+    Sem a env, o padrão só vale com a extra `embeddings` instalada: numa instalação
+    só léxica cada busca avisaria "reranker indisponível" sem o usuário ter pedido nada."""
+    valor = os.environ.get("RERANKER")
+    if valor is None:
+        if importlib.util.find_spec("sentence_transformers") is None:
+            return None
+        valor = RERANKER_ENV_PADRAO
+    valor = valor.strip()
     if valor.lower() in DESLIGADO:
         return None
     return valor
@@ -69,5 +82,5 @@ def pontuar(consulta: str, itens: list[dict], chave: str | None = None) -> list[
     # que é a do RERANK_MINIMO
     import torch
 
-    logits = modelo.predict(pares, show_progress_bar=False, activation_fn=torch.nn.Identity())
+    logits = modelo.predict(pares, batch_size=TAMANHO_LOTE, show_progress_bar=False, activation_fn=torch.nn.Identity())
     return [1.0 / (1.0 + math.exp(-float(logit))) for logit in logits]

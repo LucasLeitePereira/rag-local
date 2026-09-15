@@ -63,6 +63,27 @@ Uma ingestão com `--sem-embeddings` sobre um índice que tinha vetores remove a
 camada vetorial (o relatório avisa "Camada vetorial removida"); a busca fica
 só léxica, sem aviso, até uma ingestão com embeddings.
 
+## "Aviso: reranker indisponível (...)" ou busca lenta
+
+O reranker reordena os resultados da busca híbrida (ver `docs/ARQUITETURA.md`,
+"Reranker"). Quando não carrega, a busca segue na ordem híbrida e avisa o
+motivo entre parênteses:
+
+- **Sem internet na primeira busca:** o modelo
+  `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (~470 MB) é baixado na primeira
+  vez. Rode uma `docserver search` com internet, ou desligue com
+  `RERANKER=desligado`.
+- **Pouca memória:** o `bge-m3` precisa de mais de 3 GB livres. Volte ao
+  padrão com `RERANKER=mminilm`.
+
+Cada busca com reranker leva ~3 s em CPU (e ~35 s com `bge-m3`). Se isso
+atrapalha, use `RERANKER=desligado` no ambiente do servidor ou
+`docserver search --sem-rerank` para uma busca pontual.
+
+Se acertos legítimos somem dos resultados, reduza `RERANK_MINIMO` (padrão
+0.01). Se perguntas fora da documentação trazem lixo, aumente o valor, mas
+0.1 já derruba acertos no corpus deste projeto.
+
 ## "Índice indisponível: o índice está num formato antigo"
 
 O índice foi gravado por uma versão anterior do docserver, com outras colunas. Rode

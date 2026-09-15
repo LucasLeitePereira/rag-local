@@ -128,7 +128,10 @@ SIMILARIDADE_MINIMA_PADRAO = 0.85
 # cross-encoder, reordenados, e só ficam os com pontuação >= RERANK_MINIMO — o corte
 # de `_relevante` deixa de valer. Valores calibrados pela avaliação (ver ARQUITETURA).
 N_CANDIDATOS_RERANK = 20
-RERANK_MINIMO_PADRAO = 0.1
+# Acertos reais do corpus local chegam a notas de 0,02–0,05 e negativas passam de
+# 0,1: nenhum corte separa os dois. 0,01 é o maior que não perde acerto nenhum
+# (esvazia 27% das negativas); 0,1 esvaziaria 82% mas derruba o hit@5 de 97% a 90%.
+RERANK_MINIMO_PADRAO = 0.01
 
 # Palavras vazias do português (já sem acento, minúsculas) removidas da consulta
 # antes de montar a query FTS e de calcular a cobertura léxica — sem isso, uma
