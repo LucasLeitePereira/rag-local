@@ -466,6 +466,7 @@ Informe ao usuário:
 - [`docs/AGENTES.md`](docs/AGENTES.md) — como conectar um cliente MCP
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — rodar local, Docker, Codespaces, roteiro de demonstração
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — problemas comuns e como resolvê-los
+- [`projeto/`](projeto/README.md) — registro do projeto: backlog de tarefas, diagnóstico, planos, decisões, testes e diário das sessões
 
 ## Desenvolvimento
 

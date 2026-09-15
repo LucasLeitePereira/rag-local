@@ -321,7 +321,7 @@ qualidade de busca"):
 
 ## Fase futura
 
-Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):
+Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original, `projeto/planos/2026-09-13-plano-original.md`):
 
 - **Expansão de consulta / perguntas sintéticas** — para melhorar recall em corpora grandes.
 - **Transporte HTTP com OAuth** — para servir múltiplos usuários/serviços remotos.
