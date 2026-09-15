@@ -4,8 +4,8 @@ Tarefas para implementar no futuro, no estilo de um board do Jira. A fonte
 principal é o `diagnostico.md` (IDs originais C/A/M/I entre parênteses),
 somada aos ajustes encontrados ao testar o `docserver watch`.
 
-> Última revisão: 2026-09-15 · Tarefas de prioridade alta 001–008 concluídas na branch
-> `feat/prioridade-alta`; a TASK-009 ficou em andamento (ver "Retomar amanhã").
+> Última revisão: 2026-09-15 · Tarefas de prioridade alta 001–009 concluídas na branch
+> `feat/prioridade-alta`.
 > Os achados C1–C6 do diagnóstico já foram
 > resolvidos (commit `6cdb0aa`) e não aparecem aqui, exceto a parte pendente do C3.
 
@@ -40,7 +40,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-006 | Números de página nos chunks de PDF | Extração | 🔴 Alta | M | Concluída |
 | TASK-007 | Ampliar o conjunto de avaliação e as métricas | Busca | 🔴 Alta | M | Concluída |
 | TASK-008 | Pesos BM25 por coluna e caminhos `UNINDEXED` | Busca | 🔴 Alta | P | Concluída |
-| TASK-009 | Reranker cross-encoder sobre os candidatos fundidos | Busca | 🔴 Alta | G | Em andamento |
+| TASK-009 | Reranker cross-encoder sobre os candidatos fundidos | Busca | 🔴 Alta | G | Concluída |
 | TASK-010 | Autenticação por token no modo HTTP | Segurança | 🔴 Alta | M | Backlog |
 | TASK-011 | `docker-compose.yml` sem TTY e `DEPLOY.md` atualizado sobre HTTP | Infra | 🔴 Alta | P | Backlog |
 | TASK-012 | Eliminar o `UnicodeDecodeError` da verificação do Tesseract | Extração | 🟡 Média | P | Concluída |
@@ -279,20 +279,16 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Critérios de aceite:** avaliação (TASK-007) não piora; consulta "api" deixa de favorecer chunks só pelo caminho.
 
 ### TASK-009 · Reranker cross-encoder sobre os candidatos fundidos
-- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Em andamento
+- **Prioridade:** 🔴 Alta · **Esforço:** G · **Tipo:** melhoria · **Status:** Concluída (`d736053`, `a23f5b6`)
 - **Origem:** diagnóstico (C3, parte pendente); fase futura em `ARQUITETURA.md`
 - **Contexto:** o corte por cobertura léxica melhorou "rate limit da API", mas ainda vêm trechos do livro com "limit" e "API" em outro sentido.
 - **O que fazer:** cross-encoder multilíngue leve (ex.: `BAAI/bge-reranker-v2-m3` ou menor) sobre ~20 candidatos; opcional por extra de instalação; pré-carregado no aquecimento.
 - **Critérios de aceite:** ganho mensurável na avaliação; latência por consulta em CPU medida e documentada; sem a extra, a busca funciona como hoje.
 - **Dependências:** TASK-007.
-- **Feito (código, sem commit de calibração):** `src/docserver/rerank.py` com `mminilm` (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) e `bge-m3` (`BAAI/bge-reranker-v2-m3`), escolhidos pela env `RERANKER`; pontuação normalizada por sigmoide (0–1). `buscar_hibrido(reranquear_fn=...)` repontua os 20 primeiros da fusão, ordena e corta abaixo de `RERANK_MINIMO` (env, padrão provisório 0.1); falha no reranker cai no corte normal com aviso. `search --sem-rerank`, `avaliar --rerankers mminilm,bge-m3` (modos `hibrido+<chave>`), aquecimento no servidor e testes (`tests/test_rerank.py`, um `lento` com o mMiniLM real). **O reranker está desligado por padrão** (`RERANKER_ENV_PADRAO = "desligado"`) até a calibração.
-- **Retomar amanhã:**
-  1. Reingerir o corpus real (`docserver ingest`): o `data/indice.db` ainda está no esquema v1 e o servidor/busca respondem "formato antigo" até isso. A reingestão de hoje foi interrompida no meio dos embeddings (a transação única não gravou nada). Anotar o tempo total e rodar de novo para confirmar "Inalterados: 11" em segundos.
-  2. Terminar o download do `bge-reranker-v2-m3` (~2,3 GB no cache do Hugging Face em C:, que está com ~8 GB livres; ficaram ~256 MB parciais).
-  3. `docserver avaliar avaliacao/perguntas-corpus-local.yaml --rerankers mminilm,bge-m3` (e o conjunto `avaliacao/perguntas.yaml`), comparando com a linha de base do `docs/ARQUITETURA.md`: hit@1/hit@5/MRR/trecho@5, taxa de negativas vazias e ms por consulta em CPU.
-  4. Escolher o modelo padrão (ou manter desligado se não houver ganho), calibrar `RERANK_MINIMO` pelos negativos, revisar os pesos BM25 da TASK-008 e registrar números e decisão em `ARQUITETURA.md` (tirar o reranker da "Fase futura"); atualizar README/AGENTES/TROUBLESHOOTING com `RERANKER`/`RERANK_MINIMO`.
-  5. Verificação final do plano: `pytest -m lento`; `docserver search "Application Engine" --documento pt857tape-b022020.pdf` mostra a página; `ler_documento` do livro devolve "parte 1 de N"; `ler_trecho` com id vindo de `buscar`; busca durante ingestão sem `database is locked`; watcher parado por mais de 1 h não se redispara.
-  6. Mover a TASK-009 para "Concluídas" e abrir o PR de `feat/prioridade-alta`.
+- **Feito:** `src/docserver/rerank.py` com `mminilm` (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, padrão) e `bge-m3` (`BAAI/bge-reranker-v2-m3`), escolhidos pela env `RERANKER`; nota 0–1 por sigmoide dos logits; `buscar_hibrido` repontua os 20 primeiros da fusão e corta abaixo de `RERANK_MINIMO` (padrão 0.01); falha no reranker cai na ordem híbrida com aviso; instalação só léxica não liga o reranker. `search --sem-rerank`, `avaliar --rerankers`, aquecimento no servidor.
+- **Resultado (números em `docs/ARQUITETURA.md`):** corpus local hit@1 90% → 97%, hit@5 92% → 97%, trecho@5 85% → 92%; demo hit@1 90% → 95%. Custo: ~3 s por busca em CPU (contra ~70 ms). O `bge-m3` levou ~35 s por busca e estourou a RAM de 8 GB. Pesos BM25 da TASK-008 mantidos.
+- **Verificação real (2026-09-15):** reingestão do corpus do esquema v1 → v4 em 36,5 min (6 109 chunks); segunda rodada em 2,4 s ("Inalterados: 11"); `search` mostra a página; `ler_documento` do livro devolve "parte 1 de 52"; `ler_trecho` com id de `buscar`; `pytest -m lento` verde. Busca concorrente com ingestão e watcher parado por mais de 1 h ficaram cobertos só pelos testes automatizados (WAL e filtro por `stat`).
+- **Ficou para depois:** as negativas ainda são o ponto fraco (só 27% voltam vazias no corpus local; um corte maior derruba acertos); a latência de ~3 s poderia cair repontuando menos candidatos (`N_CANDIDATOS_RERANK` não é configurável por env). Ver TASK-024.
 
 ### TASK-024 · Limiar vetorial relativo ou calibrado
 - **Prioridade:** 🟡 Média · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
@@ -479,3 +475,4 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-005 | Ingestão incremental por sha256, numa transação única | 2026-09-15 | `a8b7737` |
 | — | Watcher ignora eventos de último acesso (cada ingestão disparava a próxima) | 2026-09-15 | `c5aa97c` |
 | TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |
+| TASK-009 | Reranker cross-encoder (mMiniLM por padrão, calibrado pela avaliação) | 2026-09-15 | `d736053`, `a23f5b6` |
