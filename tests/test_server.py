@@ -539,3 +539,32 @@ def test_ingestao_sem_embeddings_sobre_indice_vetorial_informa_remocao_da_camada
     assert relatorio["camada_vetorial_removida"] is True
     assert "Camada vetorial removida" in cli.formatar_relatorio(relatorio)
     assert cli.executar_stats(caminho_indice)["modelo"] is None
+
+
+def test_pdf_ingerido_mostra_pagina_na_busca_e_ler_documento_sem_marcadores(tmp_path, tres_paginas_pdf):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    (docs_fonte / "tres.pdf").write_bytes(tres_paginas_pdf.read_bytes())
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    with index.criar_indice(caminho_indice) as conexao:
+        resultados = index.buscar(conexao, "backup", limite=5)
+    # o PDF de exemplo é curto: um único chunk cobre as três páginas
+    assert [(r["pagina_inicio"], r["pagina_fim"]) for r in resultados] == [(1, 3)]
+
+    texto_busca = server._buscar_texto(caminho_indice, "backup")
+    assert "pp. 1–3" in texto_busca
+    assert "(pp. 1–3)" in cli.formatar_resultados(resultados)
+
+    texto = server._ler_documento_texto("tres.pdf", docs_normalizado, caminho_indice)
+    assert "backup" in texto
+    assert "pagina:" not in texto
+
+
+def test_formatar_paginas():
+    assert cli.formatar_paginas({"pagina_inicio": None, "pagina_fim": None}) is None
+    assert cli.formatar_paginas({}) is None
+    assert cli.formatar_paginas({"pagina_inicio": 4, "pagina_fim": 4}) == "p. 4"
+    assert cli.formatar_paginas({"pagina_inicio": 4, "pagina_fim": 6}) == "pp. 4–6"

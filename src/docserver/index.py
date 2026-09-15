@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 # sozinha, e o servidor avisa em vez de falhar com "no such column".
 #   1 — sem versão gravada; caminhos indexados no FTS
 #   2 — caminhos UNINDEXED e pesos BM25 por coluna (TASK-008)
-VERSAO_ESQUEMA = 2
+#   3 — pagina_inicio / pagina_fim (TASK-006)
+VERSAO_ESQUEMA = 3
 
 # Os caminhos ficam UNINDEXED: continuam filtráveis (`caminho_origem = ?`) e
 # devolvidos na busca, mas as palavras deles não casam consultas — "api" no nome da
@@ -33,6 +34,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
     secao,
     texto,
     ordem UNINDEXED,
+    pagina_inicio UNINDEXED,
+    pagina_fim UNINDEXED,
     tokenize = "unicode61 remove_diacritics 2"
 );
 """
@@ -44,7 +47,16 @@ CREATE TABLE IF NOT EXISTS metadados_indice (
 );
 """
 
-_CAMPOS = ["caminho_origem", "caminho_normalizado", "titulo_doc", "secao", "texto", "ordem"]
+_CAMPOS = [
+    "caminho_origem",
+    "caminho_normalizado",
+    "titulo_doc",
+    "secao",
+    "texto",
+    "ordem",
+    "pagina_inicio",
+    "pagina_fim",
+]
 
 # Campos cujos termos contam para a cobertura léxica (ver `_cobertura_lexica`): os
 # mesmos que o FTS indexa.

@@ -121,6 +121,8 @@ def _formatar_resultados_mcp(resultados: list[dict]) -> str:
     blocos = []
     for i, r in enumerate(resultados, 1):
         detalhes = [f"chunk {r['id']}", f"posição {r['ordem']} no documento"]
+        if paginas := cli.formatar_paginas(r):
+            detalhes.append(paginas)
         if r.get("similaridade") is not None:
             detalhes.append(f"similaridade {r['similaridade']:.2f}")
         cabecalho = f"[{i}] {r['caminho_origem']} › {r['secao']}  ({' · '.join(detalhes)})"
@@ -191,7 +193,7 @@ def _ler_documento_texto(caminho: str, docs_normalizado: Path, caminho_indice: s
         )
 
     _, corpo = extract.ler_front_matter(arquivo.read_text(encoding="utf-8"))
-    return corpo
+    return extract.remover_marcadores_pagina(corpo)
 
 
 def _aquecer(caminho_indice: str) -> None:

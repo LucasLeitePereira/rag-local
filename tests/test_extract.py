@@ -174,3 +174,23 @@ def test_ler_front_matter_separa_metadados_do_corpo():
 
     assert meta["origem"] == "docs-fonte/guia.md"
     assert corpo == "# Guia\n\nTexto.\n"
+
+
+def test_pdf_ganha_um_marcador_por_pagina(tres_paginas_pdf):
+    texto = extract.extrair_texto(tres_paginas_pdf)
+
+    assert [numero for numero, _, _ in extract.paginas_marcadas(texto)] == [1, 2, 3]
+    assert texto.index("instalação") < texto.index("<!--pagina:2-->") < texto.index("configuração")
+    assert "pagina:" not in extract.remover_marcadores_pagina(texto)
+
+
+def test_fallback_markitdown_nao_tem_marcadores(monkeypatch, tmp_path):
+    caminho = tmp_path / "escaneado.pdf"
+    caminho.write_bytes(b"%PDF-falso")
+    monkeypatch.setattr(extract, "_pdf_por_paginas", lambda c: "<!--pagina:1-->\n\n")
+    monkeypatch.setattr(extract, "_extrair_com_markitdown", lambda c: "texto do markitdown " * 20)
+
+    texto = extract.extrair_texto(caminho)
+
+    assert extract.paginas_marcadas(texto) == []
+    assert extract._ultimo_extrator_pdf == "markitdown"

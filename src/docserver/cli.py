@@ -147,7 +147,7 @@ def executar_ingestao(
         relatorio["processados"] += 1
         conteudo = caminho_normalizado_arquivo.read_text(encoding="utf-8")
         _, corpo = extract.ler_front_matter(conteudo)
-        if len(corpo.strip()) < MIN_CARACTERES_SUSPEITO:
+        if len(extract.remover_marcadores_pagina(corpo)) < MIN_CARACTERES_SUSPEITO:
             relatorio["suspeitos"].append(str(caminho))
 
         todos_chunks.extend(chunk.chunkar_arquivo(caminho_normalizado_arquivo, docs_normalizado))
@@ -241,12 +241,24 @@ def executar_busca(
         conexao.close()
 
 
+def formatar_paginas(resultado: dict) -> str | None:
+    """`p. N` ou `pp. N–M` para chunks de PDF; None para os demais formatos."""
+    inicio, fim = resultado.get("pagina_inicio"), resultado.get("pagina_fim")
+    if inicio is None:
+        return None
+    if fim is None or fim == inicio:
+        return f"p. {inicio}"
+    return f"pp. {inicio}–{fim}"
+
+
 def formatar_resultados(resultados: list[dict]) -> str:
     if not resultados:
         return MENSAGEM_SEM_RESULTADOS
     blocos = []
     for i, r in enumerate(resultados, 1):
-        blocos.append(f"[{i}] {r['caminho_origem']} › {r['secao']}\n{r['texto'][:300]}")
+        paginas = formatar_paginas(r)
+        sufixo = f" ({paginas})" if paginas else ""
+        blocos.append(f"[{i}] {r['caminho_origem']} › {r['secao']}{sufixo}\n{r['texto'][:300]}")
     return "\n\n".join(blocos)
 
 

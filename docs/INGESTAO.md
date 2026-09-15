@@ -157,8 +157,20 @@ manualmente depois de mudar os documentos.
 |---|---|
 | `.md`, `.markdown`, `.txt` | cópia direta |
 | `.docx`, `.pptx`, `.xlsx`, `.html` | `markitdown` |
-| `.pdf` | `pymupdf4llm` (com limpeza de artefatos de formatação); se sair com menos de ~200 caracteres, cai para `markitdown` |
+| `.pdf` | `pymupdf4llm` página a página (com limpeza de artefatos de formatação e sem OCR); se sair com menos de ~200 caracteres, cai para `markitdown` |
 | `.csv` | vira tabela Markdown |
+
+### Páginas de PDF
+
+O Markdown normalizado de um PDF traz um marcador `<!--pagina:N-->` numa linha
+própria no início de cada página. O chunking converte os marcadores em
+`pagina_inicio`/`pagina_fim` de cada chunk e os tira do texto indexado; `buscar`
+mostra `p. N` ou `pp. N–M` e `ler_documento` devolve o corpo sem eles. PDFs que
+caíram no `markitdown` (e os demais formatos) ficam sem página.
+
+A extração chama o `pymupdf4llm` com `use_ocr=False`: sem isso, ele procurava o
+Tesseract a cada PDF e, sem o Tesseract instalado, imprimia um `UnicodeDecodeError`
+(ruído, não falha). OCR continua fora de escopo.
 
 Qualquer outra extensão é ignorada (aparece em "Ignorados" no relatório, não
 derruba a ingestão). Arquivos ocultos (começam com `.`) e temporários do

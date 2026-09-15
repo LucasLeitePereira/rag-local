@@ -66,21 +66,53 @@ def _extrair_com_markitdown(caminho: Path) -> str:
     return MarkItDown().convert(str(caminho)).text_content
 
 
+# Marcador de início de página no Markdown normalizado de PDFs, numa linha própria e
+# sem espaços (sobrevive a qualquer divisão por parágrafo, linha ou palavra no
+# chunking). `chunk.py` o converte em `pagina_inicio`/`pagina_fim` e o tira do texto;
+# `ler_documento` também o remove. Todas as páginas recebem marcador, mesmo vazias:
+# o texto antes do marcador N está sempre na página N-1.
+MARCADOR_PAGINA = "<!--pagina:{}-->"
+_MARCADOR_PAGINA_RE = re.compile(r"<!--pagina:(\d+)-->")
+
+
+def remover_marcadores_pagina(texto: str) -> str:
+    sem = _MARCADOR_PAGINA_RE.sub("\n\n", texto)
+    return _LINHAS_EM_BRANCO_DEMAIS.sub("\n\n", sem).strip()
+
+
+def paginas_marcadas(texto: str) -> list[tuple[int, int, int]]:
+    """[(número da página, início do marcador, fim do marcador), ...] em ordem."""
+    return [(int(m.group(1)), m.start(), m.end()) for m in _MARCADOR_PAGINA_RE.finditer(texto)]
+
+
+def _pdf_por_paginas(caminho: Path) -> str:
+    import pymupdf4llm
+
+    # use_ocr=False: sem ele, o pymupdf4llm procura o Tesseract a cada PDF
+    # (`pymupdf.get_tessdata`, subprocess com saída em cp850 lida como UTF-8) e, sem o
+    # Tesseract instalado, imprime um UnicodeDecodeError — e OCR está fora de escopo.
+    paginas = pymupdf4llm.to_markdown(str(caminho), page_chunks=True, use_ocr=False)
+    partes = []
+    for posicao, pagina in enumerate(paginas, 1):
+        numero = (pagina.get("metadata") or {}).get("page_number") or posicao
+        partes.append(MARCADOR_PAGINA.format(numero) + "\n\n" + _limpar_markdown_pdf(pagina.get("text") or ""))
+    return "\n\n".join(partes)
+
+
 def _extrair_pdf(caminho: Path) -> str:
     """pymupdf4llm é o extrator principal: preserva cabeçalhos (o markitdown não gera
     nenhum) e não gruda palavras entre si como o markitdown costuma fazer. Cai para
     o markitdown só quando o pymupdf4llm falha ou devolve pouco texto (PDF escaneado,
-    por exemplo) — nesse caso fica o que vier mais longo dos dois."""
+    por exemplo) — nesse caso fica o que vier mais longo dos dois. Só o texto do
+    pymupdf4llm leva marcadores de página; o do markitdown fica sem páginas."""
     global _ultimo_extrator_pdf
 
     try:
-        import pymupdf4llm
-
-        texto = _limpar_markdown_pdf(pymupdf4llm.to_markdown(str(caminho)))
+        texto = _pdf_por_paginas(caminho)
     except Exception:
         texto = ""
 
-    if len(texto.strip()) >= MIN_CARACTERES_PDF_VALIDO:
+    if len(remover_marcadores_pagina(texto)) >= MIN_CARACTERES_PDF_VALIDO:
         _ultimo_extrator_pdf = "pymupdf4llm"
         return texto
 
@@ -90,7 +122,7 @@ def _extrair_pdf(caminho: Path) -> str:
         _ultimo_extrator_pdf = "pymupdf4llm"
         return texto
 
-    if len(texto_alternativo.strip()) > len(texto.strip()):
+    if len(texto_alternativo.strip()) > len(remover_marcadores_pagina(texto)):
         _ultimo_extrator_pdf = "markitdown"
         return texto_alternativo
     _ultimo_extrator_pdf = "pymupdf4llm"

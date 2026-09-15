@@ -117,3 +117,47 @@ def test_titulo_cai_para_primeira_linha_quando_nao_ha_cabecalho(criar_normalizad
     chunks = chunk.chunkar_arquivo(caminho, contar_tokens_fn=_contar_tokens_falso)
 
     assert chunks[0]["titulo_doc"] == "Texto corrido sem nenhum cabeçalho, só parágrafos soltos."
+
+
+def test_paginas_do_bloco_sem_marcador_herda_a_pagina_corrente():
+    assert chunk._paginas_do_bloco("texto qualquer", 4) == (4, 4, 4)
+    assert chunk._paginas_do_bloco("texto qualquer", None) == (None, None, None)
+
+
+def test_paginas_do_bloco_texto_antes_do_marcador_e_da_pagina_anterior():
+    bloco = "fim da página dois\n\n<!--pagina:3-->\n\ncomeço da três"
+
+    assert chunk._paginas_do_bloco(bloco, 2) == (2, 3, 3)
+
+
+def test_paginas_do_bloco_marcador_no_fim_nao_estende_a_pagina_final():
+    assert chunk._paginas_do_bloco("texto da página cinco\n\n<!--pagina:6-->", 5) == (5, 5, 6)
+    assert chunk._paginas_do_bloco("<!--pagina:1-->\n\ntexto", None) == (1, 1, 1)
+
+
+def test_chunks_de_pdf_carregam_paginas_sem_marcadores_no_texto(tmp_path, monkeypatch):
+    paginas = [f"<!--pagina:{n}-->\n\n" + " ".join(f"p{n}palavra{i}" for i in range(60)) for n in (1, 2, 3)]
+    arquivo = tmp_path / "doc.pdf.md"
+    arquivo.write_text("---\norigem: docs-fonte/doc.pdf\n---\n\n" + "\n\n".join(paginas), encoding="utf-8")
+    original = chunk._blocos_por_tamanho
+    monkeypatch.setattr(
+        chunk,
+        "_blocos_por_tamanho",
+        lambda texto, contar: original(texto, contar, max_tokens=70, sobreposicao_tokens=10),
+    )
+
+    chunks = chunk.chunkar_arquivo(arquivo, contar_tokens_fn=lambda t: len(t.split()))
+
+    assert len(chunks) > 3
+    for c in chunks:
+        assert "pagina:" not in c["texto"]
+        numeros = {int(p[1:].split("palavra")[0]) for p in c["texto"].split()}
+        assert (c["pagina_inicio"], c["pagina_fim"]) == (min(numeros), max(numeros))
+    # a sobreposição leva a cauda de uma página para o chunk que abre a seguinte
+    assert any(c["pagina_inicio"] != c["pagina_fim"] for c in chunks)
+
+
+def test_documento_sem_marcadores_fica_sem_pagina(com_cabecalhos_md):
+    chunks = chunk.chunkar_arquivo(com_cabecalhos_md, contar_tokens_fn=_contar_tokens_falso)
+
+    assert all(c["pagina_inicio"] is None and c["pagina_fim"] is None for c in chunks)

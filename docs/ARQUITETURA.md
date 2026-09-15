@@ -238,6 +238,17 @@ e ingestão antes, ou copie os três arquivos juntos.
 `ler_documento`, `docserver search` e `docserver avaliar` respondem "índice em
 formato antigo — rode `docserver ingest`" em vez de falhar com `no such column`.
 
+### Página de origem por marcador no Markdown normalizado
+
+Cada chunk de PDF guarda `pagina_inicio` e `pagina_fim` (colunas `UNINDEXED`,
+esquema versão 3), para o agente citar "p. 12". A extração junta as páginas do
+`pymupdf4llm` (`page_chunks=True`) com um marcador `<!--pagina:N-->` numa linha
+própria, e o chunking percorre os blocos em ordem mantendo a página corrente. Como
+**toda** página recebe marcador, mesmo vazia, o texto antes do marcador N é sempre
+da página N-1, o que mantém as páginas certas também na cauda de sobreposição
+entre chunks. Guardar a página no Markdown, e não só no índice, deixa o
+`docs-normalizado/` autossuficiente para reindexar sem reextrair.
+
 ### Pesos BM25 por coluna, caminhos fora do FTS
 
 Os caminhos (`caminho_origem`, `caminho_normalizado`) são `UNINDEXED`: continuam

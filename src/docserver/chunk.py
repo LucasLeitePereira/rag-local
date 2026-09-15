@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from docserver import embed
-from docserver.extract import ler_front_matter
+from docserver.extract import ler_front_matter, paginas_marcadas, remover_marcadores_pagina
 
 MAX_TOKENS_CHUNK = 400
 SOBREPOSICAO_TOKENS = 50
@@ -55,11 +55,37 @@ def _titulo_documento(corpo: str) -> str:
     m = _CABECALHO_QUALQUER.search(corpo)
     if m:
         return m.group(1).strip()
-    for linha in corpo.splitlines():
+    for linha in remover_marcadores_pagina(corpo).splitlines():
         linha = linha.strip()
         if linha:
             return linha[:80].strip("# ").strip()
     return ""
+
+
+def _paginas_do_bloco(bloco: str, pagina_corrente: int | None) -> tuple[int | None, int | None, int | None]:
+    """(pagina_inicio, pagina_fim, nova pagina_corrente) de um bloco de texto.
+
+    Todas as páginas do PDF têm marcador (ver `extract.MARCADOR_PAGINA`), então o texto
+    antes do marcador N está na página N-1, e o texto depois dele, na N. Um bloco sem
+    marcador está inteiro na página corrente — a do último marcador visto. Só páginas
+    com texto no bloco contam: um marcador no fim do bloco não estende `pagina_fim`."""
+    marcas = paginas_marcadas(bloco)
+    if not marcas:
+        return pagina_corrente, pagina_corrente, pagina_corrente
+
+    com_texto = []
+    primeira = marcas[0][0]
+    if bloco[: marcas[0][1]].strip():
+        com_texto.append(primeira - 1 if primeira > 1 else primeira)
+    for i, (numero, _, fim_marcador) in enumerate(marcas):
+        proximo = marcas[i + 1][1] if i + 1 < len(marcas) else len(bloco)
+        if bloco[fim_marcador:proximo].strip():
+            com_texto.append(numero)
+
+    nova_corrente = marcas[-1][0]
+    if not com_texto:
+        return nova_corrente, nova_corrente, nova_corrente
+    return min(com_texto), max(com_texto), nova_corrente
 
 
 def _dividir_por_secoes(corpo: str, titulo_doc: str) -> list[tuple[str, str]]:
@@ -217,11 +243,15 @@ def chunkar_arquivo(
 
     chunks: list[dict] = []
     ordem = 0
+    pagina_corrente = None
     for nome_secao, texto_secao in secoes:
         blocos = _blocos_por_tamanho(texto_secao, contar)
 
         for bloco in blocos:
-            bloco = bloco.strip()
+            # a página corrente avança mesmo com o bloco descartado abaixo: um bloco
+            # só com o marcador ainda diz em que página começa o texto seguinte
+            pagina_inicio, pagina_fim, pagina_corrente = _paginas_do_bloco(bloco, pagina_corrente)
+            bloco = remover_marcadores_pagina(bloco) if pagina_corrente is not None else bloco.strip()
             if len(bloco) < MIN_CARACTERES:
                 continue
             chunks.append(
@@ -232,6 +262,8 @@ def chunkar_arquivo(
                     "secao": nome_secao,
                     "texto": bloco,
                     "ordem": ordem,
+                    "pagina_inicio": pagina_inicio,
+                    "pagina_fim": pagina_fim,
                 }
             )
             ordem += 1

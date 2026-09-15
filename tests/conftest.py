@@ -122,3 +122,19 @@ def docs_normalizado(tmp_path):
     caminho = tmp_path / "docs-normalizado"
     caminho.mkdir()
     return caminho
+
+
+@pytest.fixture
+def tres_paginas_pdf(tmp_path):
+    """PDF de 3 páginas, cada uma com uma frase que identifica o número da página."""
+    import pymupdf
+
+    documento = pymupdf.open()
+    for numero, assunto in ((1, "instalação"), (2, "configuração"), (3, "backup")):
+        pagina = documento.new_page()
+        pagina.insert_text((72, 72), f"Página {numero} trata de {assunto} do sistema de exemplo.")
+        pagina.insert_text((72, 100), f"Mais detalhes sobre {assunto} ficam descritos aqui nesta página.")
+    caminho = tmp_path / "tres.pdf"
+    documento.save(caminho)
+    documento.close()
+    return caminho
