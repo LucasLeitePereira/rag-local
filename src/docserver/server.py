@@ -135,8 +135,12 @@ def _buscar_texto(caminho_indice: str, consulta: str, limite: int = 5, documento
                 opcoes = "\n".join(f"- {c}" for c in candidatos)
                 return f"Caminho ambíguo, mais de um documento corresponde a '{documento}':\n{opcoes}"
             origem = candidatos[0]
-        resultados = index.buscar_hibrido(conexao, consulta, limite=limite, origem=origem)
-    return _formatar_resultados_mcp(resultados)
+        avisos: list[str] = []
+        resultados = index.buscar_hibrido(conexao, consulta, limite=limite, origem=origem, avisos=avisos)
+    texto = _formatar_resultados_mcp(resultados)
+    if avisos:
+        texto = "\n".join(f"Aviso: {aviso}" for aviso in avisos) + "\n\n" + texto
+    return texto
 
 
 def _dentro_de(caminho: Path, base: Path) -> bool:

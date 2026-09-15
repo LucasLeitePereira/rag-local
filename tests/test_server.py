@@ -478,3 +478,47 @@ def test_configurar_resolve_caminhos_relativos_para_absolutos(tmp_path, monkeypa
 
     assert server._config["docs_normalizado"] == (tmp_path / "docs-normalizado").resolve()
     assert Path(server._config["indice"]) == (tmp_path / "data" / "indice.db").resolve()
+
+
+def test_buscar_mostra_aviso_quando_a_busca_semantica_falha(tmp_path, monkeypatch):
+    caminho_indice = str(tmp_path / "indice.db")
+    conexao = index.criar_indice(caminho_indice)
+    chunk = {
+        "caminho_origem": "docs-fonte/a.md",
+        "caminho_normalizado": "a.md",
+        "titulo_doc": "A",
+        "secao": "Faturamento",
+        "texto": "O faturamento mensal é consolidado no dia 5.",
+        "ordem": 0,
+    }
+    index.indexar_chunks(conexao, [chunk], embeddings=[[1.0] + [0.0] * (embed.DIMENSAO - 1)])
+    conexao.close()
+
+    def _sem_extra(consulta):
+        raise ImportError("sentence-transformers não instalado")
+
+    monkeypatch.setattr(embed, "embeddar_consulta", _sem_extra)
+
+    texto = server._buscar_texto(caminho_indice, "faturamento")
+
+    assert texto.startswith("Aviso: busca semântica indisponível")
+    assert "consolidado no dia 5" in texto
+
+
+def test_ingestao_sem_embeddings_sobre_indice_vetorial_informa_remocao_da_camada(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_normalizado = tmp_path / "docs-normalizado"
+    docs_fonte.mkdir()
+    (docs_fonte / "guia.md").write_text(
+        "# Guia\n\n## Seção\n\nConteúdo com bastante texto sobre faturamento mensal.\n", encoding="utf-8"
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(
+        docs_fonte, docs_normalizado, caminho_indice, embeddar_passagem_fn=lambda c: [1.0, 0.0, 0.0], nome_modelo="fake"
+    )
+
+    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, caminho_indice, sem_embeddings=True)
+
+    assert relatorio["camada_vetorial_removida"] is True
+    assert "Camada vetorial removida" in cli.formatar_relatorio(relatorio)
+    assert cli.executar_stats(caminho_indice)["modelo"] is None

@@ -44,6 +44,23 @@ em `docs/INGESTAO.md`):
 - **"nenhum arquivo em formato suportado"** ou **"não gerou nenhum chunk"** —
   se a intenção é mesmo esvaziar o índice, repita com `--forcar`.
 
+## "Aviso: busca semântica indisponível (...)"
+
+`buscar` (e `docserver search`) não conseguiu usar a camada vetorial e devolveu
+só os resultados da busca léxica (BM25). O motivo vem entre parênteses:
+
+- **`No module named 'sentence_transformers'`**: a extra `embeddings` não está
+  instalada. Instale-a (ver README) ou reingira com `--sem-embeddings` para
+  remover a camada vetorial de vez.
+- **"o índice foi construído com o modelo ..."**: o índice foi gerado com
+  outro modelo de embeddings. Reconstrua com `docserver ingest --limpar`.
+- **Erro do sqlite-vec**: a extensão não carregou nesta máquina; reinstale as
+  dependências.
+
+Uma ingestão com `--sem-embeddings` sobre um índice que tinha vetores remove a
+camada vetorial (o relatório avisa "Camada vetorial removida"); a busca fica
+só léxica, sem aviso, até uma ingestão com embeddings.
+
 ## `docserver watch` não reagiu a uma mudança
 
 1. Confira se a mudança foi num arquivo que a ingestão leria: formatos não

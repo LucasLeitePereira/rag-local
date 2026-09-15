@@ -286,3 +286,58 @@ def test_modelo_divergente_gera_erro_explicito_na_abertura_do_indice():
         assert False, "deveria ter levantado ErroModeloDivergente"
     except index.ErroModeloDivergente:
         pass
+
+
+def test_reindexar_sem_embeddings_remove_a_camada_vetorial_e_a_busca_nao_chama_o_modelo():
+    conexao = conn()
+    chunks = [_chunk(texto="Conteúdo sobre faturamento mensal da empresa.")]
+    index.indexar_chunks(conexao, chunks, embeddings=[[1.0, 0.0, 0.0]], nome_modelo="fake")
+
+    removida = index.reindexar(conexao, chunks)
+
+    def _nao_chamar(consulta):
+        raise AssertionError("não deveria calcular embedding sem camada vetorial")
+
+    assert removida is True
+    assert not index._tabela_vetorial_existe(conexao)
+    assert conexao.execute("SELECT COUNT(*) FROM metadados_indice WHERE chave = 'modelo'").fetchone()[0] == 0
+    resultados = index.buscar_hibrido(conexao, "faturamento", embeddar_consulta_fn=_nao_chamar)
+    assert len(resultados) == 1
+
+
+def test_falha_ao_carregar_o_modelo_cai_para_lexico_com_aviso():
+    conexao = conn()
+    index.indexar_chunks(
+        conexao, [_chunk(texto="Conteúdo sobre faturamento mensal.")], embeddings=[[1.0, 0.0, 0.0]], nome_modelo="fake"
+    )
+
+    def _sem_extra(consulta):
+        raise ImportError("No module named 'sentence_transformers'")
+
+    avisos = []
+    resultados = index.buscar_hibrido(
+        conexao, "faturamento", embeddar_consulta_fn=_sem_extra, nome_modelo="fake", dimensao=3, avisos=avisos
+    )
+
+    assert len(resultados) == 1
+    assert len(avisos) == 1 and "sentence_transformers" in avisos[0] and "léxica" in avisos[0]
+
+
+def test_modelo_divergente_na_busca_hibrida_cai_para_lexico_com_aviso():
+    conexao = conn()
+    index.indexar_chunks(
+        conexao, [_chunk(texto="Conteúdo sobre faturamento mensal.")], embeddings=[[1.0, 0.0, 0.0]], nome_modelo="modelo-a"
+    )
+
+    avisos = []
+    resultados = index.buscar_hibrido(
+        conexao,
+        "faturamento",
+        embeddar_consulta_fn=_embeddar_consulta_fixa([1.0, 0.0]),
+        nome_modelo="modelo-b",
+        dimensao=2,
+        avisos=avisos,
+    )
+
+    assert len(resultados) == 1
+    assert avisos and "modelo-a" in avisos[0]

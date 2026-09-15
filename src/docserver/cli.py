@@ -171,7 +171,9 @@ def executar_ingestao(
             embeddings = embed.embeddar_passagens(todos_chunks)
 
     conexao = index.criar_indice(caminho_indice)
-    index.reindexar(conexao, todos_chunks, embeddings=embeddings, nome_modelo=nome_modelo)
+    relatorio["camada_vetorial_removida"] = index.reindexar(
+        conexao, todos_chunks, embeddings=embeddings, nome_modelo=nome_modelo
+    )
     conexao.close()
 
     relatorio["chunks"] = len(todos_chunks)
@@ -190,6 +192,12 @@ def formatar_relatorio(relatorio: dict) -> str:
         f"  Suspeitos (texto vazio): {len(relatorio['suspeitos'])}",
         f"  Removidos (órfãos):      {len(relatorio['removidos'])}",
     ]
+    if relatorio.get("camada_vetorial_removida"):
+        linhas.append("")
+        linhas.append(
+            "Camada vetorial removida: ingestão sem embeddings — a busca passa a ser só léxica "
+            "até uma ingestão com embeddings."
+        )
     if relatorio["falhas"]:
         linhas.append("")
         linhas.append("Falhas:")
@@ -214,7 +222,12 @@ def formatar_relatorio(relatorio: dict) -> str:
 
 
 def executar_busca(
-    caminho_indice: str, consulta: str, limite: int = 5, modo: str = "hibrido", origem: str | None = None
+    caminho_indice: str,
+    consulta: str,
+    limite: int = 5,
+    modo: str = "hibrido",
+    origem: str | None = None,
+    avisos: list[str] | None = None,
 ) -> list[dict]:
     conexao = index.criar_indice(caminho_indice)
     try:
@@ -222,7 +235,7 @@ def executar_busca(
             return index.buscar(conexao, consulta, limite, origem=origem)
         if modo == "vetorial":
             return index.buscar_vetorial(conexao, consulta, limite, origem=origem)
-        return index.buscar_hibrido(conexao, consulta, limite, origem=origem)
+        return index.buscar_hibrido(conexao, consulta, limite, origem=origem, avisos=avisos)
     finally:
         conexao.close()
 
@@ -494,7 +507,12 @@ def _comando_search(args: argparse.Namespace) -> None:
             return
         origem = candidatos[0]
 
-    resultados = executar_busca(args.indice, args.consulta, args.limite, modo=args.modo, origem=origem)
+    avisos: list[str] = []
+    resultados = executar_busca(
+        args.indice, args.consulta, args.limite, modo=args.modo, origem=origem, avisos=avisos
+    )
+    for aviso in avisos:
+        print(f"Aviso: {aviso}")
     print(formatar_resultados(resultados))
 
 

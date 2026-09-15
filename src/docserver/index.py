@@ -207,18 +207,40 @@ def indexar_chunks(
     conexao.commit()
 
 
+def remover_camada_vetorial(conexao: sqlite3.Connection) -> bool:
+    """Apaga a tabela vetorial e o modelo registrado. Devolve True se havia camada.
+
+    Esvaziar só as linhas de `chunks_vec` não basta: com a tabela e o modelo ainda
+    registrados, a busca híbrida continuava achando que havia vetores e tentava
+    carregar o modelo — numa instalação sem a extra `embeddings`, ImportError em vez
+    do fallback para BM25."""
+    if not _tabela_vetorial_existe(conexao):
+        return False
+    _carregar_extensao_vec(conexao)
+    conexao.execute("DROP TABLE chunks_vec")
+    conexao.execute(_ESQUEMA_METADADOS)
+    conexao.execute("DELETE FROM metadados_indice WHERE chave IN ('modelo', 'dimensao')")
+    return True
+
+
 def reindexar(
     conexao: sqlite3.Connection,
     chunks: list[dict],
     embeddings: list[list[float]] | None = None,
     nome_modelo: str | None = None,
-) -> None:
+) -> bool:
+    """Substitui todo o conteúdo do índice. Sem embeddings, a camada vetorial é
+    removida (ver `remover_camada_vetorial`). Devolve True se isso aconteceu."""
     conexao.execute("DELETE FROM chunks")
-    if _tabela_vetorial_existe(conexao):
+    camada_removida = False
+    if not embeddings:
+        camada_removida = remover_camada_vetorial(conexao)
+    elif _tabela_vetorial_existe(conexao):
         # conexão nova não conhece o módulo vec0 até a extensão ser carregada
         _carregar_extensao_vec(conexao)
         conexao.execute("DELETE FROM chunks_vec")
     indexar_chunks(conexao, chunks, embeddings=embeddings, nome_modelo=nome_modelo)
+    return camada_removida
 
 
 def _sem_acentos(texto: str) -> str:
@@ -443,7 +465,14 @@ def buscar_hibrido(
     nome_modelo: str | None = None,
     dimensao: int | None = None,
     origem: str | None = None,
+    avisos: list[str] | None = None,
 ) -> list[dict]:
+    """Busca híbrida (BM25 + vetorial, fundidas por RRF) com corte de relevância.
+
+    Se a via vetorial falhar — extra `embeddings` não instalada, modelo divergente do
+    índice, extensão sqlite-vec indisponível —, a busca segue só com o léxico em vez
+    de devolver o erro cru: o motivo é registrado no log e acrescentado a `avisos`
+    (quando informado) para quem chama mostrar ao usuário ou ao agente."""
     peso_lexico = float(os.environ.get("PESO_LEXICO", 1.0))
     peso_vetorial = float(os.environ.get("PESO_VETORIAL", 1.0))
     cobertura_minima = float(os.environ.get("COBERTURA_LEXICA_MINIMA", COBERTURA_LEXICA_MINIMA_PADRAO))
@@ -469,15 +498,24 @@ def buscar_hibrido(
     if peso_vetorial == 0:
         return _filtrar(lexico)[:limite]
 
-    vetorial = buscar_vetorial(
-        conexao,
-        consulta,
-        limite=20,
-        embeddar_consulta_fn=embeddar_consulta_fn,
-        nome_modelo=nome_modelo,
-        dimensao=dimensao,
-        origem=origem,
-    )
+    try:
+        vetorial = buscar_vetorial(
+            conexao,
+            consulta,
+            limite=20,
+            embeddar_consulta_fn=embeddar_consulta_fn,
+            nome_modelo=nome_modelo,
+            dimensao=dimensao,
+            origem=origem,
+        )
+    except (ImportError, ErroModeloDivergente, sqlite3.OperationalError) as erro:
+        motivo = str(erro) or type(erro).__name__
+        logger.warning("busca vetorial indisponível (%s) — caindo para busca léxica (BM25) pura", motivo)
+        if avisos is not None:
+            avisos.append(
+                f"busca semântica indisponível ({motivo}); os resultados vêm apenas da busca léxica."
+            )
+        return _filtrar(lexico)[:limite]
     similaridades = {item["id"]: _distancia_para_similaridade(item["distancia"]) for item in vetorial}
     for item in vetorial:
         item["similaridade"] = similaridades[item["id"]]
