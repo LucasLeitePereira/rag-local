@@ -1,0 +1,381 @@
+# Conjunto de avaliação do corpus local (PDFs em docs-fonte/, fora do Git).
+#
+# Depende dos arquivos abaixo estarem ingeridos; em outra máquina, rode
+# `docserver avaliar avaliacao/perguntas-corpus-local.yaml --validar` para ver o que
+# falta. Formato dos campos: ver avaliacao/perguntas.yaml.
+#
+# Documentos cobertos:
+#   - Fundamentals of Data Engineering (livro, inglês)
+#   - (PO) Niteroi_Final_Report_v1.51-all.pdf (relatório, português, texto fragmentado)
+#   - pt857tape-b022020.pdf (PeopleTools 8.57: Application Engine, inglês)
+#   - pt857tpcr-b022020.pdf (PeopleTools 8.57: PeopleCode API Reference, inglês)
+#   - f39476e4f7addfe77e1d5d41f4c16eef.pdf (calendário acadêmico 2026, tabelas)
+#
+# As perguntas em português sobre documentos em inglês medem justamente a via
+# vetorial (multilíngue); as técnicas usam o termo exato do documento.
+
+# --- Fundamentals of Data Engineering ---------------------------------------
+
+- pergunta: "Type A data engineers"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "managed services, and tools. Type A data engineers work at companies"
+
+- pergunta: "qual a diferença entre engenheiro de dados tipo A e tipo B"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Type B data engineers build data tools and systems that scale"
+
+- pergunta: "Lambda architecture serving layer"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "The serving layer provides a combined view by aggregating query results from the two layers"
+
+- pergunta: "quem propôs a arquitetura Kappa como alternativa à Lambda"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Jay Kreps proposed an alternative called"
+
+- pergunta: "slowly changing dimension Type 2"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "Keep a full history of dimension records"
+
+- pergunta: "o que acontece com o histórico numa dimensão de mudança lenta do tipo 1"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Overwrite existing dimension records"
+
+- pergunta: "Bezos API Mandate"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "All teams will henceforth expose their data and functionality through service interfaces"
+
+- pergunta: "o que é uma decisão reversível do tipo two-way door"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "is an easily reversible decision"
+
+- pergunta: "strangler pattern"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "new systems slowly and incrementally replace a legacy"
+
+- pergunta: "how should I approach redesigning an existing legacy architecture"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Projects roughly fall into two buckets: brownfield and greenfield"
+
+- pergunta: "shared responsibility model"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "divides security into the security"
+
+- pergunta: "quem criou o termo data warehouse"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Bill Inmon officially coining the term"
+
+- pergunta: "quais são as etapas do ciclo de vida da engenharia de dados"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "The stages of the data engineering lifecycle are as follows"
+
+- pergunta: "data mesh"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "each software team is responsible for preparing its data for consumption"
+
+- pergunta: "principle of least privilege"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: tecnico
+  trecho: "giving a user or system access to only the essential data and resources"
+
+- pergunta: "devo dar acesso de administrador ao banco para todos os engenheiros de dados?"
+  esperado: "docs-fonte/Fundamentals of Data Engineering (Reis, JoeHousley, Matt) (Z-Library).pdf"
+  perfil: natural
+  trecho: "Don’t give full database access to anyone unless required"
+
+# --- Relatório final de Niterói ---------------------------------------------
+
+- pergunta: "qual a duração do projeto de segurança urbana em Niterói"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "2025.12.17 ~ 2026.09.30 (9.5 meses)"
+
+- pergunta: "Consórcio NexIN Technology"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "NexIN Technology, YiEUM Partners, Instituto de Seul"
+
+- pergunta: "quanto da entrada de dados ainda é manual nas secretarias"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "Dependência de 66,7% de entrada manual"
+
+- pergunta: "qual o orçamento total estimado da plataforma de dados"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "Total Geral|963|15,173|16,136"
+
+- pergunta: "taxa de câmbio KRW USD do orçamento"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "KRW 1.300 por USD"
+
+- pergunta: "Prometheus Grafana EFK Stack"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "Monitoramento de recursos em tempo real com Prometheus"
+
+- pergunta: "quantos registros de ocorrência foram usados na análise-piloto"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "41,671 casos 2021 – 2025"
+
+- pergunta: "qual bairro de Niterói concentra mais crimes"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "Centro 10,670 (28.6%)"
+
+- pergunta: "roubo de veículo Código Penal Art. 157"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "Roubo CP Art. 157"
+
+- pergunta: "R² do ensemble híbrido para roubo e furto"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "R² 0.71 (Roubo) · 0.79 (Furto)"
+
+- pergunta: "como o modelo de previsão combina GradientBoosting e RandomForest"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "0.5·GBR + 0.3·RF"
+
+- pergunta: "as câmeras cobrem as áreas de alto risco?"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "Cobertura atual de CCTV: menos de 10% das áreas de alto"
+
+- pergunta: "recomendação de reforço de patrulha nos horários de pico"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "Dobrar o efetivo de patrulha móvel"
+
+- pergunta: "Comitê Mensal de Governança de Dados"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "Comitê Mensal de Governança de Dados|Presidente: CIO"
+
+- pergunta: "carga horária do programa de capacitação para gestores"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: natural
+  trecho: "4H/sem × 16 sem = 64H"
+
+- pergunta: "Lei Federal 13.022 Guarda Municipal"
+  esperado: "docs-fonte/(PO) Niteroi_Final_Report_v1.51-all.pdf"
+  perfil: tecnico
+  trecho: "Lei Federal 13.022"
+
+# --- PeopleTools 8.57: Application Engine -----------------------------------
+
+- pergunta: "quais são os tipos de programa do Application Engine"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "Application Engine has five types of programs"
+
+- pergunta: "PSDAEMON"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "runs continuously when PeopleSoft Process Scheduler is running"
+
+- pergunta: "how many state records can an Application Engine program have"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "up to 200 state records"
+
+- pergunta: "state record _AET process instance key"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "the state record name must end with _AET"
+
+- pergunta: "um programa novo do Application Engine faz commit por padrão?"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "the commit values at the section and the step level are turned off"
+
+- pergunta: "Bulk Insert"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "Oracle, Microsoft SQLServer, and DB2"
+
+- pergunta: "AERUNCONTROL"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "keyed by process instance"
+
+- pergunta: "CacheBaseDir"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "Do not share the CacheBaseDir variable with application servers"
+
+- pergunta: "como liberar tabelas temporárias travadas depois que o programa abortou"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "use the Manage Abends page"
+
+- pergunta: "Global Temporary Tables maximum number of instances"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "maximum of 9999"
+
+- pergunta: "TraceAE PSAPPSRV.CFG"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "set the TraceAE parameter in the Trace section of the Application Server configuration file"
+
+- pergunta: "qual a diferença entre rodar o Application Engine online e em batch"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "Started by the CallAppEngine function from PeopleCode"
+
+- pergunta: "%TruncateTable implicit commit restart"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: tecnico
+  trecho: "Application Engine issues delete from syntax instead"
+
+- pergunta: "what happens to completed steps when I restart a failed program"
+  esperado: "docs-fonte/pt857tape-b022020.pdf"
+  perfil: natural
+  trecho: "Ignore the steps that have already completed up to the last successful commit"
+
+# --- PeopleTools 8.57: PeopleCode API Reference -----------------------------
+
+- pergunta: "AESection class template section"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: tecnico
+  trecho: "any existing steps in the section are deleted"
+
+- pergunta: "quantas dimensões pode ter um array em PeopleCode"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: natural
+  trecho: "The maximum depth of a PeopleCode array is 15 dimensions"
+
+- pergunta: "how do I instantiate a Crypt object"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: natural
+  trecho: "instantiate a crypt object using the CreateObject function"
+
+- pergunta: "qual a vantagem da classe SQL em relação ao SQLExec"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: natural
+  trecho: "Unlike SQLExec, which fetches just the first SELECTed row"
+
+- pergunta: "BulkMode property"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: tecnico
+  trecho: "set the BulkMode property to True"
+
+- pergunta: "Try Catch End-Try exception handling"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: tecnico
+  trecho: "enclosed by the Try and End-Try statements"
+
+- pergunta: "PT_MCF_MAIL"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: tecnico
+  trecho: "The PT_MCF_MAIL application package contains the following classes"
+
+- pergunta: "JsonObject class"
+  esperado: "docs-fonte/pt857tpcr-b022020.pdf"
+  perfil: tecnico
+  trecho: "A Json object by itself can hold nested Json object or field values"
+
+# --- Calendário acadêmico 2026 ----------------------------------------------
+
+- pergunta: "quando começam as aulas dos calouros da graduação"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: natural
+  trecho: "Início das aulas de Graduação(Calouros)"
+
+- pergunta: "Recesso de Carnaval"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: tecnico
+  trecho: "14 a 21|Recesso de Carnaval"
+
+- pergunta: "Período de Defesas de TCC"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: tecnico
+  trecho: "15 a 30|Período de Defesas de TCC"
+
+- pergunta: "quando é a colação de grau no segundo semestre"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: natural
+  trecho: "Cerimônias de Colação de Grau"
+
+- pergunta: "férias coletivas dos administrativos"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: tecnico
+  trecho: "Férias Coletivas-Administrativos"
+
+- pergunta: "tem feriado no aniversário de Niterói?"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: natural
+  trecho: "Feriado Municipal de São João-Aniversário de Niterói"
+
+- pergunta: "Renovação Antecipada de Matrículas 2027_1"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: tecnico
+  trecho: "Renovação Antecipada de Matrículaspara 2027_1"
+
+- pergunta: "Semana de Avaliação Regimental G2"
+  esperado: "docs-fonte/f39476e4f7addfe77e1d5d41f4c16eef.pdf"
+  perfil: tecnico
+  trecho: "Semana de Avaliação Regimental G2"
+
+# --- Negativas: nada no corpus responde ------------------------------------
+
+- pergunta: "receita de bolo de chocolate"
+  esperado: null
+  perfil: natural
+
+- pergunta: "qual é o valor do salário mínimo em 2026"
+  esperado: null
+  perfil: natural
+
+- pergunta: "como declarar imposto de renda de pessoa física"
+  esperado: null
+  perfil: natural
+
+- pergunta: "React useEffect cleanup function"
+  esperado: null
+  perfil: tecnico
+
+- pergunta: "melhor época para plantar tomate"
+  esperado: null
+  perfil: natural
+
+- pergunta: "resultado do campeonato brasileiro de futebol"
+  esperado: null
+  perfil: natural
+
+- pergunta: "regras do vestibular de medicina"
+  esperado: null
+  perfil: natural
+
+- pergunta: "Terraform AWS provider version constraints"
+  esperado: null
+  perfil: tecnico
+
+- pergunta: "quantos habitantes tem Florianópolis"
+  esperado: null
+  perfil: natural
+
+- pergunta: "Python asyncio event loop"
+  esperado: null
+  perfil: tecnico
+
+- pergunta: "política de reembolso de passagens aéreas"
+  esperado: null
+  perfil: natural

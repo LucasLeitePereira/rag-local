@@ -287,6 +287,92 @@ def _buscar_no_modo(
     raise ValueError(f"modo de busca desconhecido: {modo}")
 
 
+TOP_K_AVALIACAO = 5
+
+
+def _normalizar_trecho(texto: str) -> str:
+    """Forma usada para comparar `trecho` com o texto dos chunks: sem acento, sem
+    caixa e com espaços colapsados (a extração de PDF quebra linhas no meio da frase)."""
+    return " ".join(index._sem_acentos(texto).split())
+
+
+def _metricas_vazias() -> dict:
+    return {
+        "positivas": 0,
+        "hit1": 0,
+        "hit5": 0,
+        "rr": 0.0,
+        "com_trecho": 0,
+        "trecho5": 0,
+        "negativas": 0,
+        "negativas_vazias": 0,
+        "consultas": 0,
+        "tempo_s": 0.0,
+    }
+
+
+def _pontuar_resposta(metricas: dict, item: dict, topo: list[dict]) -> None:
+    esperado = item.get("esperado")
+    if esperado is None:
+        metricas["negativas"] += 1
+        if not topo:
+            metricas["negativas_vazias"] += 1
+        return
+
+    metricas["positivas"] += 1
+    posicoes = [i for i, r in enumerate(topo[:TOP_K_AVALIACAO], 1) if r["caminho_origem"] == esperado]
+    if posicoes:
+        metricas["hit5"] += 1
+        metricas["rr"] += 1 / posicoes[0]
+        if posicoes[0] == 1:
+            metricas["hit1"] += 1
+
+    trecho = item.get("trecho")
+    if trecho:
+        metricas["com_trecho"] += 1
+        alvo = _normalizar_trecho(trecho)
+        if any(
+            r["caminho_origem"] == esperado and alvo in _normalizar_trecho(r["texto"])
+            for r in topo[:TOP_K_AVALIACAO]
+        ):
+            metricas["trecho5"] += 1
+
+
+def validar_perguntas(caminho_perguntas: Path, caminho_indice: str) -> list[str]:
+    """Confere o conjunto de avaliação contra o índice: cada `esperado` precisa estar
+    indexado e cada `trecho` precisa existir em algum chunk desse documento — senão a
+    pergunta mede um erro de digitação, não a busca. Devolve os problemas encontrados."""
+    perguntas = _carregar_perguntas(caminho_perguntas)
+    problemas = []
+    conexao = index.criar_indice(caminho_indice)
+    try:
+        for numero, item in enumerate(perguntas, 1):
+            rotulo = f"#{numero} \"{item.get('pergunta', '')}\""
+            if not item.get("pergunta") or item.get("perfil") not in ("tecnico", "natural"):
+                problemas.append(f"{rotulo}: precisa de 'pergunta' e de 'perfil' (tecnico ou natural)")
+                continue
+            esperado = item.get("esperado")
+            if esperado is None:
+                if item.get("trecho"):
+                    problemas.append(f"{rotulo}: pergunta negativa (esperado: null) não pode ter 'trecho'")
+                continue
+            textos = [
+                linha[0]
+                for linha in conexao.execute("SELECT texto FROM chunks WHERE caminho_origem = ?", (esperado,))
+            ]
+            if not textos:
+                problemas.append(f"{rotulo}: documento esperado não está no índice: {esperado}")
+                continue
+            trecho = item.get("trecho")
+            if trecho:
+                alvo = _normalizar_trecho(trecho)
+                if not any(alvo in _normalizar_trecho(texto) for texto in textos):
+                    problemas.append(f"{rotulo}: trecho não encontrado em nenhum chunk de {esperado}: {trecho!r}")
+    finally:
+        conexao.close()
+    return problemas
+
+
 def executar_avaliacao(
     caminho_perguntas: Path,
     caminho_indice: str,
@@ -295,17 +381,18 @@ def executar_avaliacao(
     nome_modelo: str | None = None,
     dimensao: int | None = None,
 ) -> dict:
-    """Roda cada pergunta do conjunto de avaliação e mede se o doc esperado aparece no top-5."""
+    """Roda cada pergunta do conjunto de avaliação em cada modo e acumula, por modo e
+    perfil, os contadores de `_metricas_vazias` (hit@1, hit@5, MRR@5, trecho@5,
+    negativas sem resultado e tempo). As taxas são calculadas em `taxas_avaliacao`."""
     perguntas = _carregar_perguntas(caminho_perguntas)
-    contagem: dict[str, dict[str, list[int]]] = {modo: {} for modo in modos}
+    resultado: dict[str, dict[str, dict]] = {modo: {} for modo in modos}
 
     conexao = index.criar_indice(caminho_indice)
     try:
         for item in perguntas:
-            perfil = item["perfil"]
-            esperado = item["esperado"]
             for modo in modos:
-                marcador = contagem[modo].setdefault(perfil, [0, 0])
+                metricas = resultado[modo].setdefault(item["perfil"], _metricas_vazias())
+                inicio = time.perf_counter()
                 topo = _buscar_no_modo(
                     conexao,
                     modo,
@@ -314,39 +401,121 @@ def executar_avaliacao(
                     nome_modelo=nome_modelo,
                     dimensao=dimensao,
                 )
-                acertou = any(r["caminho_origem"] == esperado for r in topo)
-                marcador[1] += 1
-                if acertou:
-                    marcador[0] += 1
+                metricas["tempo_s"] += time.perf_counter() - inicio
+                metricas["consultas"] += 1
+                _pontuar_resposta(metricas, item, topo)
     finally:
         conexao.close()
 
-    return contagem
+    return resultado
 
 
-def formatar_tabela_avaliacao(contagem: dict) -> str:
-    modos = list(contagem.keys())
-    perfis = sorted({perfil for dados in contagem.values() for perfil in dados})
+def _somar_metricas(por_perfil: dict) -> dict:
+    total = _metricas_vazias()
+    for metricas in por_perfil.values():
+        for chave, valor in metricas.items():
+            total[chave] += valor
+    return total
 
-    def _somar(perfil: str) -> list[int]:
-        acerto = sum(contagem[modo].get(perfil, [0, 0])[0] for modo in modos)
-        total = sum(contagem[modo].get(perfil, [0, 0])[1] for modo in modos)
-        return [acerto, total]
 
-    largura_perfil = max(len(p) for p in [*perfis, "geral"]) + 2
-    cabecalho = " " * largura_perfil + "".join(f"{modo:>10}" for modo in modos)
-    linhas = [cabecalho]
-    for perfil in perfis:
-        celulas = "".join(f"{contagem[modo][perfil][0]}/{contagem[modo][perfil][1]:<8}".rjust(10) for modo in modos)
-        linhas.append(f"{perfil:<{largura_perfil}}{celulas}")
-    return "\n".join(linhas)
+def taxas_avaliacao(metricas: dict) -> dict:
+    """Converte os contadores em taxas (0–1) e latência média; `None` quando não há
+    pergunta daquele tipo."""
+
+    def _razao(parte, todo):
+        return parte / todo if todo else None
+
+    return {
+        "hit1": _razao(metricas["hit1"], metricas["positivas"]),
+        "hit5": _razao(metricas["hit5"], metricas["positivas"]),
+        "mrr5": _razao(metricas["rr"], metricas["positivas"]),
+        "trecho5": _razao(metricas["trecho5"], metricas["com_trecho"]),
+        "negativas_vazias": _razao(metricas["negativas_vazias"], metricas["negativas"]),
+        "ms_por_consulta": _razao(metricas["tempo_s"] * 1000, metricas["consultas"]),
+    }
+
+
+def formatar_tabela_avaliacao(resultado: dict) -> str:
+    """Uma linha por modo × perfil, mais a linha "geral" de cada modo. `neg vazio` é a
+    fração das perguntas sem resposta que voltaram sem resultado (só modos com corte
+    de relevância chegam a devolver vazio)."""
+    colunas = [
+        ("hit@1", "hit1", "pct"),
+        ("hit@5", "hit5", "pct"),
+        ("MRR@5", "mrr5", "dec"),
+        ("trecho@5", "trecho5", "pct"),
+        ("neg vazio", "negativas_vazias", "pct"),
+        ("ms/cons", "ms_por_consulta", "ms"),
+    ]
+
+    def _celula(valor, formato):
+        if valor is None:
+            return "—"
+        if formato == "pct":
+            return f"{valor:.0%}"
+        if formato == "dec":
+            return f"{valor:.2f}"
+        return f"{valor:.0f}"
+
+    linhas_dados = []
+    for modo, por_perfil in resultado.items():
+        grupos = [(perfil, por_perfil[perfil]) for perfil in sorted(por_perfil)]
+        grupos.append(("geral", _somar_metricas(por_perfil)))
+        for perfil, metricas in grupos:
+            taxas = taxas_avaliacao(metricas)
+            detalhe = f"{metricas['hit5']}/{metricas['positivas']}"
+            linhas_dados.append(
+                [modo, perfil, detalhe, *(_celula(taxas[chave], formato) for _, chave, formato in colunas)]
+            )
+
+    cabecalho = ["modo", "perfil", "acertos", *(titulo for titulo, _, _ in colunas)]
+    larguras = [max(len(str(linha[i])) for linha in [cabecalho, *linhas_dados]) for i in range(len(cabecalho))]
+
+    def _linha(celulas):
+        esquerda = [f"{celulas[i]:<{larguras[i]}}" for i in range(2)]
+        direita = [f"{celulas[i]:>{larguras[i]}}" for i in range(2, len(celulas))]
+        return "  ".join(esquerda + direita).rstrip()
+
+    return "\n".join([_linha(cabecalho), *(_linha(linha) for linha in linhas_dados)])
 
 
 def _comando_avaliar(args: argparse.Namespace) -> None:
-    resultado = executar_avaliacao(
-        Path(args.perguntas), args.indice, modos=("lexico", "vetorial", "hibrido")
-    )
+    if not Path(args.indice).exists():
+        print(f"Índice não encontrado em {args.indice}. Rode 'docserver ingest' primeiro.")
+        raise SystemExit(1)
+
+    problemas = validar_perguntas(Path(args.perguntas), args.indice)
+    if problemas:
+        print("Conjunto de avaliação inválido:")
+        for problema in problemas:
+            print(f"- {problema}")
+        raise SystemExit(1)
+    if args.validar:
+        print("Conjunto de avaliação válido.")
+        return
+
+    conexao = index.criar_indice(args.indice)
+    try:
+        tem_vetores = index._tabela_vetorial_existe(conexao)
+    finally:
+        conexao.close()
+    modos = ("lexico", "vetorial", "hibrido") if tem_vetores else ("lexico", "hibrido")
+    if tem_vetores:
+        # carrega o modelo antes de medir: senão a 1ª consulta vetorial carrega a
+        # latência do import do torch e dos pesos
+        embed.embeddar_consulta("aquecimento")
+
+    resultado = executar_avaliacao(Path(args.perguntas), args.indice, modos=modos)
     print(formatar_tabela_avaliacao(resultado))
+    if not tem_vetores:
+        print("\nÍndice sem camada vetorial: modo vetorial omitido e híbrido equivale ao léxico com corte.")
+
+    if args.min_hit5 is not None:
+        hit5 = taxas_avaliacao(_somar_metricas(resultado["hibrido"]))["hit5"]
+        if hit5 is None or hit5 < args.min_hit5:
+            atual = "—" if hit5 is None else f"{hit5:.0%}"
+            print(f"\nhit@5 do modo híbrido ({atual}) abaixo da meta de {args.min_hit5:.0%}.")
+            raise SystemExit(1)
 
 
 def executar_stats(caminho_indice: str) -> dict:
@@ -558,6 +727,18 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p_avaliar = subs.add_parser("avaliar", help="roda o conjunto de avaliação")
     p_avaliar.add_argument("perguntas")
+    p_avaliar.add_argument(
+        "--validar",
+        action="store_true",
+        help="só confere o conjunto (documentos esperados indexados e trechos existentes), sem rodar a busca",
+    )
+    p_avaliar.add_argument(
+        "--min-hit5",
+        type=float,
+        default=None,
+        metavar="TAXA",
+        help="sai com código 1 se o hit@5 geral do modo híbrido ficar abaixo desta taxa (0–1)",
+    )
     p_avaliar.set_defaults(func=_comando_avaliar)
 
     p_serve = subs.add_parser("serve", help="sobe o servidor MCP (stdio por padrão, ou HTTP com --http)")

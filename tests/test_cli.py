@@ -238,8 +238,111 @@ def test_avaliar_calcula_taxa_de_acerto_por_perfil_no_modo_lexico(tmp_path):
 
     resultado = cli.executar_avaliacao(caminho_perguntas, caminho_indice)
 
-    assert resultado["lexico"]["tecnico"] == [1, 1]
-    assert resultado["lexico"]["natural"] == [0, 1]
+    tecnico = resultado["lexico"]["tecnico"]
+    natural = resultado["lexico"]["natural"]
+    assert (tecnico["hit1"], tecnico["hit5"], tecnico["positivas"]) == (1, 1, 1)
+    assert tecnico["rr"] == 1.0
+    assert (natural["hit5"], natural["positivas"]) == (0, 1)
+    assert tecnico["consultas"] == 1 and tecnico["tempo_s"] >= 0
+
+
+def _indice_com_dois_documentos(tmp_path):
+    docs_fonte = tmp_path / "docs-fonte"
+    docs_fonte.mkdir()
+    (docs_fonte / "auth.md").write_text(
+        "# Auth\n\n## Renovação\n\nO refresh token dura 30 dias e é rotacionado a cada uso.\n",
+        encoding="utf-8",
+    )
+    (docs_fonte / "cobranca.md").write_text(
+        "# Cobrança\n\n## Suspensão\n\nA conta é suspensa após 15 dias de atraso no pagamento do token.\n",
+        encoding="utf-8",
+    )
+    caminho_indice = str(tmp_path / "indice.db")
+    cli.executar_ingestao(docs_fonte, tmp_path / "docs-normalizado", caminho_indice, sem_embeddings=True)
+    return caminho_indice
+
+
+def test_avaliar_mede_trecho_e_perguntas_negativas(tmp_path):
+    caminho_indice = _indice_com_dois_documentos(tmp_path)
+    caminho_perguntas = tmp_path / "perguntas.yaml"
+    caminho_perguntas.write_text(
+        "- pergunta: \"refresh token\"\n"
+        "  esperado: docs-fonte/auth.md\n"
+        "  perfil: tecnico\n"
+        "  trecho: \"dura 30 DIAS e e rotacionado\"\n"
+        "- pergunta: \"refresh token\"\n"
+        "  esperado: docs-fonte/auth.md\n"
+        "  perfil: tecnico\n"
+        "  trecho: \"frase que não está no chunk\"\n"
+        "- pergunta: \"orçamento trimestral de marketing\"\n"
+        "  esperado: null\n"
+        "  perfil: natural\n",
+        encoding="utf-8",
+    )
+
+    resultado = cli.executar_avaliacao(caminho_perguntas, caminho_indice, modos=("hibrido",))
+
+    tecnico = resultado["hibrido"]["tecnico"]
+    assert (tecnico["com_trecho"], tecnico["trecho5"]) == (2, 1)
+    natural = resultado["hibrido"]["natural"]
+    assert (natural["positivas"], natural["negativas"], natural["negativas_vazias"]) == (0, 1, 1)
+    assert cli.taxas_avaliacao(natural)["hit5"] is None
+
+
+def test_mrr_usa_a_posicao_do_primeiro_acerto():
+    metricas = cli._metricas_vazias()
+    topo = [{"caminho_origem": "outro.md", "texto": ""}, {"caminho_origem": "certo.md", "texto": ""}]
+
+    cli._pontuar_resposta(metricas, {"esperado": "certo.md"}, topo)
+
+    assert (metricas["hit1"], metricas["hit5"], metricas["rr"]) == (0, 1, 0.5)
+
+
+def test_validar_perguntas_aponta_documento_e_trecho_inexistentes(tmp_path):
+    caminho_indice = _indice_com_dois_documentos(tmp_path)
+    caminho_perguntas = tmp_path / "perguntas.yaml"
+    caminho_perguntas.write_text(
+        "- pergunta: \"ok\"\n"
+        "  esperado: docs-fonte/auth.md\n"
+        "  perfil: tecnico\n"
+        "  trecho: \"rotacionado a cada uso\"\n"
+        "- pergunta: \"doc sumiu\"\n"
+        "  esperado: docs-fonte/nao-existe.md\n"
+        "  perfil: tecnico\n"
+        "- pergunta: \"trecho errado\"\n"
+        "  esperado: docs-fonte/auth.md\n"
+        "  perfil: natural\n"
+        "  trecho: \"dura 60 dias\"\n"
+        "- pergunta: \"negativa com trecho\"\n"
+        "  esperado: null\n"
+        "  perfil: natural\n"
+        "  trecho: \"qualquer\"\n",
+        encoding="utf-8",
+    )
+
+    problemas = cli.validar_perguntas(caminho_perguntas, caminho_indice)
+
+    assert len(problemas) == 3
+    assert "nao-existe.md" in problemas[0]
+    assert "dura 60 dias" in problemas[1]
+    assert "negativa" in problemas[2]
+
+
+def test_comando_avaliar_sai_com_erro_abaixo_da_meta_de_hit5(tmp_path, capsys):
+    caminho_indice = _indice_com_dois_documentos(tmp_path)
+    caminho_perguntas = tmp_path / "perguntas.yaml"
+    caminho_perguntas.write_text(
+        "- pergunta: \"refresh rotacionado\"\n"
+        "  esperado: docs-fonte/cobranca.md\n"
+        "  perfil: tecnico\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as saida:
+        cli.main(["--indice", caminho_indice, "avaliar", str(caminho_perguntas), "--min-hit5", "0.9"])
+
+    assert saida.value.code == 1
+    assert "abaixo da meta" in capsys.readouterr().out
 
 
 def test_ingestao_com_embeddings_grava_modelo_no_indice(tmp_path):
@@ -341,7 +444,7 @@ def test_avaliar_roda_nos_tres_modos_quando_indice_vetorial_existe(tmp_path):
     )
 
     assert set(resultado.keys()) == {"lexico", "vetorial", "hibrido"}
-    assert resultado["lexico"]["tecnico"] == [1, 1]
+    assert resultado["lexico"]["tecnico"]["hit5"] == 1
 
 
 def test_stats_reporta_documentos_e_chunks_indexados(tmp_path):
@@ -410,10 +513,16 @@ def test_busca_com_documento_restringe_ao_arquivo_indicado(tmp_path):
 
 
 def test_formatar_tabela_avaliacao_mostra_colunas_por_modo():
-    resultado = {"lexico": {"tecnico": [9, 10], "natural": [3, 10]}}
+    tecnico = cli._metricas_vazias() | {"positivas": 10, "hit1": 7, "hit5": 9, "rr": 8.0, "consultas": 10}
+    natural = cli._metricas_vazias() | {"positivas": 10, "hit1": 1, "hit5": 3, "rr": 2.0, "consultas": 12}
+    natural |= {"negativas": 2, "negativas_vazias": 1}
+    resultado = {"lexico": {"tecnico": tecnico, "natural": natural}}
 
     tabela = cli.formatar_tabela_avaliacao(resultado)
 
     assert "lexico" in tabela
     assert "9/10" in tabela
     assert "3/10" in tabela
+    assert "12/20" in tabela  # linha geral
+    assert "90%" in tabela and "50%" in tabela
+    assert "geral" in tabela

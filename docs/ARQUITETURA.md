@@ -246,20 +246,68 @@ Deliberadamente fora de escopo nesta versão (ver seção 12 do plano original):
 
 ## Avaliação de qualidade de busca
 
-O conjunto de perguntas em `avaliacao/perguntas.yaml` mede, por perfil
-(`tecnico` / `natural`), se o documento esperado aparece no top-5 de cada
-modo de busca. Rodando só contra o corpus de demonstração deste repositório
-(poucos documentos, vocabulário próximo entre pergunta e resposta), os três
-modos empatam em 100% — pequeno demais para expor a diferença que a busca
-híbrida existe para resolver. Com o corpus real deste projeto (relatório de
-Niterói e calendário acadêmico somados ao corpus de demonstração, 169
-chunks), a diferença aparece: `lexico` e `hibrido` mantêm 100% nos dois
-perfis, mas `vetorial` puro cai para 9/10 no perfil técnico — um termo curto
-como "Retry-After" tem pouco significado semântico para o embedding sozinho,
-e sem o apoio do BM25 (que casa o termo exato) ou o corte de relevância
-(que só existe em `buscar_hibrido`) a busca vetorial pura erra. Por isso
-`hibrido`, não `vetorial`, é o modo recomendado para uso real — o ganho da
-camada vetorial aparece embutido nele, sem herdar essa fraqueza isolada. Ao
-adotar este projeto, substitua o conteúdo de `docs-fonte/` e as perguntas de
-`avaliacao/perguntas.yaml` pelos do seu próprio projeto e rode
-`docserver avaliar` de novo.
+`docserver avaliar <perguntas.yaml>` roda cada pergunta nos modos `lexico`,
+`vetorial` (só se o índice tem vetores) e `hibrido` e imprime, por modo e
+perfil (`tecnico` / `natural`) mais uma linha `geral`:
+
+| Métrica | O que mede |
+|---|---|
+| `hit@1`, `hit@5` | o documento `esperado` é o 1º resultado / está entre os 5 primeiros |
+| `MRR@5` | média de 1/posição do primeiro acerto (0 se não está no top-5) |
+| `trecho@5` | um chunk do documento esperado no top-5 contém o `trecho` da pergunta (sem acento, sem caixa, espaços colapsados) — acertar o documento com o chunk errado não basta para o agente responder |
+| `neg vazio` | perguntas com `esperado: null` (sem resposta na documentação) que voltaram sem resultado — mede o corte de relevância |
+| `ms/cons` | latência média por consulta, com o modelo já carregado |
+
+Antes de rodar, o comando valida o conjunto: todo `esperado` precisa estar
+indexado e todo `trecho` precisa existir em algum chunk desse documento
+(`--validar` faz só essa checagem). `--min-hit5 0.9` sai com código 1 se o
+hit@5 geral do híbrido ficar abaixo da meta, para uso em CI.
+
+Há dois conjuntos:
+
+- `avaliacao/perguntas.yaml` — 21 perguntas com resposta e 4 negativas sobre
+  os documentos de demonstração (`docs-fonte/**/*.md`), versionado.
+- `avaliacao/perguntas-corpus-local.yaml` — 62 perguntas com resposta e 11
+  negativas sobre os PDFs locais (livro *Fundamentals of Data Engineering*,
+  relatório de Niterói, manuais PeopleTools 8.57 de Application Engine e de
+  PeopleCode API, calendário acadêmico). Os PDFs **não estão no Git**: em
+  outra máquina o `--validar` aponta os documentos ausentes. Metade das
+  perguntas naturais é em português sobre documentos em inglês, o que exercita
+  a via vetorial multilíngue.
+
+### Linha de base (antes de TASK-008/006/005/009)
+
+Índice v1 do commit `5079369`: 11 documentos, 6 029 chunks, multilingual-e5-small,
+CPU (4 threads).
+
+Corpus local (`perguntas-corpus-local.yaml`):
+
+| modo | perfil | hit@1 | hit@5 | MRR@5 | trecho@5 | neg vazio | ms/cons |
+|---|---|---|---|---|---|---|---|
+| lexico | natural | 72% | 76% | 0.74 | 69% | 12% | 3 |
+| lexico | tecnico | 100% | 100% | 1.00 | 91% | 0% | 3 |
+| lexico | geral | 87% | 89% | 0.88 | 81% | 9% | 3 |
+| vetorial | natural | 83% | 86% | 0.84 | 72% | 0% | 52 |
+| vetorial | tecnico | 97% | 100% | 0.98 | 88% | 0% | 49 |
+| vetorial | geral | 90% | 94% | 0.91 | 81% | 0% | 50 |
+| hibrido | natural | 79% | 83% | 0.81 | 83% | 25% | 85 |
+| hibrido | tecnico | 100% | 100% | 1.00 | 88% | 33% | 84 |
+| hibrido | geral | 90% | 92% | 0.91 | 85% | 27% | 85 |
+
+Demonstração (`perguntas.yaml`), mesmo índice:
+
+| modo | geral hit@1 | hit@5 | MRR@5 | trecho@5 | neg vazio | ms/cons |
+|---|---|---|---|---|---|---|
+| lexico | 81% | 95% | 0.88 | 95% | 25% | 2 |
+| vetorial | 81% | 81% | 0.81 | 79% | 0% | 55 |
+| hibrido | 90% | 100% | 0.94 | 100% | 0% | 86 |
+
+Leitura: o híbrido é o melhor ou empata em hit@1, MRR e trecho, mas no perfil
+natural fica abaixo do vetorial puro (83% × 86% de hit@5) — a fusão RRF deixa
+o BM25 empurrar para baixo acertos semânticos. No perfil técnico o vetorial
+puro erra termos curtos sem significado semântico ("Retry-After",
+"LOG_LEVEL": 64% no demo), o que o BM25 corrige. O corte de relevância só
+esvazia 27% das negativas: a maioria das perguntas fora do corpus ainda
+devolve algo. São esses três pontos que TASK-008 (pesos BM25) e TASK-009
+(reranker) devem mover. Ao adotar este projeto, troque `docs-fonte/` e os
+conjuntos de perguntas pelos do seu projeto e meça de novo.

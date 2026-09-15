@@ -1,14 +1,29 @@
+# Conjunto de avaliação dos documentos de exemplo (docs-fonte/*.md).
+#
+# Campos:
+#   pergunta  consulta enviada à busca
+#   perfil    tecnico (termo exato) ou natural (linguagem do usuário)
+#   esperado  caminho_origem do documento que responde; null = a documentação
+#             não cobre o assunto (pergunta negativa: o ideal é resultado vazio)
+#   trecho    opcional; frase que precisa estar num chunk do esperado no top-5.
+#             Comparada sem acento, sem caixa e com espaços colapsados.
+#
+# Confira com `docserver avaliar avaliacao/perguntas.yaml --validar`.
+
 - pergunta: "AUTH_TOKEN_TTL"
   esperado: docs-fonte/guias/ambiente-local.md
   perfil: tecnico
+  trecho: "O padrão é 900 (15 minutos)"
 
 - pergunta: "DATABASE_URL"
   esperado: docs-fonte/guias/ambiente-local.md
   perfil: tecnico
+  trecho: "aponta para o banco Postgres local"
 
 - pergunta: "LOG_LEVEL"
   esperado: docs-fonte/guias/ambiente-local.md
   perfil: tecnico
+  trecho: "controla a verbosidade dos logs"
 
 - pergunta: "o que preciso configurar para rodar o projeto na minha máquina"
   esperado: docs-fonte/guias/ambiente-local.md
@@ -17,18 +32,22 @@
 - pergunta: "como faço para incluir os testes lentos na suíte"
   esperado: docs-fonte/guias/ambiente-local.md
   perfil: natural
+  trecho: "pytest -m lento"
 
 - pergunta: "refresh token"
   esperado: docs-fonte/arquitetura/autenticacao.md
   perfil: tecnico
+  trecho: "validade de 30 dias e é rotacionado a cada uso"
 
 - pergunta: "revogação de access token no logout"
   esperado: docs-fonte/arquitetura/autenticacao.md
   perfil: tecnico
+  trecho: "não há revogação de access token"
 
 - pergunta: "quantas tentativas de senha até bloquear a conta"
   esperado: docs-fonte/arquitetura/autenticacao.md
   perfil: natural
+  trecho: "Após três tentativas com senha incorreta"
 
 - pergunta: "o que acontece quando o cliente não paga"
   esperado: docs-fonte/processos/inadimplencia.md
@@ -37,39 +56,77 @@
 - pergunta: "quando a conta do cliente é cancelada por falta de pagamento"
   esperado: docs-fonte/processos/inadimplencia.md
   perfil: natural
+  trecho: "Após 45 dias de atraso sem contato"
 
 - pergunta: "prazo de suspensão por atraso"
   esperado: docs-fonte/processos/inadimplencia.md
   perfil: tecnico
+  trecho: "Com 15 dias de atraso, o acesso à conta é suspenso"
 
 - pergunta: "rate limit da API"
   esperado: docs-fonte/api/contratos.md
   perfil: tecnico
+  trecho: "até 100 requisições por minuto"
 
 - pergunta: "Retry-After"
   esperado: docs-fonte/api/contratos.md
   perfil: tecnico
+  trecho: "status 429"
 
 - pergunta: "como funciona a paginação dos endpoints"
   esperado: docs-fonte/api/contratos.md
   perfil: natural
+  trecho: "paginação por cursor"
 
 - pergunta: "por quanto tempo uma versão antiga da API continua funcionando"
   esperado: docs-fonte/api/contratos.md
   perfil: natural
+  trecho: "mantidas por 12 meses"
 
 - pergunta: "Redis cache"
   esperado: docs-fonte/arquitetura/visao-geral.md
   perfil: tecnico
+  trecho: "ficam em cache no Redis por 5 minutos"
 
 - pergunta: "qual banco de dados o sistema usa"
   esperado: docs-fonte/arquitetura/visao-geral.md
   perfil: natural
+  trecho: "O schema principal fica no Postgres"
 
 - pergunta: "quando eu ganho acesso ao banco de produção"
   esperado: docs-fonte/processos/onboarding.md
   perfil: natural
+  trecho: "liberado somente após 30 dias"
 
 - pergunta: "primeiro deploy de um novo desenvolvedor"
   esperado: docs-fonte/processos/onboarding.md
+  perfil: tecnico
+  trecho: "mudança trivial"
+
+- pergunta: "migrações do banco são aplicadas manualmente em produção?"
+  esperado: docs-fonte/arquitetura/visao-geral.md
+  perfil: natural
+  trecho: "aplicadas automaticamente no deploy"
+
+- pergunta: "OAuth2 Google"
+  esperado: docs-fonte/arquitetura/autenticacao.md
+  perfil: tecnico
+  trecho: "OAuth2 via Google"
+
+# Negativas: assuntos que a documentação não cobre.
+
+- pergunta: "qual é a política de férias da empresa"
+  esperado: null
+  perfil: natural
+
+- pergunta: "KUBERNETES_NAMESPACE"
+  esperado: null
+  perfil: tecnico
+
+- pergunta: "como emitir nota fiscal eletrônica para clientes no exterior"
+  esperado: null
+  perfil: natural
+
+- pergunta: "integração com GraphQL subscriptions"
+  esperado: null
   perfil: tecnico
