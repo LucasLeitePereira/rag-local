@@ -507,4 +507,4 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | — | Watcher ignora eventos de último acesso (cada ingestão disparava a próxima) | 2026-09-15 | `c5aa97c` |
 | TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |
 | TASK-009 | Reranker cross-encoder (mMiniLM por padrão, calibrado pela avaliação) | 2026-09-15 | `d736053`, `a23f5b6` |
-| TASK-052 | Aquecimento em thread no stdio: `initialize` caiu de ~186–259 s para 7,9 s | 2026-09-17 | `PENDENTE` |
+| TASK-052 | Aquecimento em thread no stdio: `initialize` caiu de ~186–259 s para 7,9 s | 2026-09-17 | `bad47d6` |
