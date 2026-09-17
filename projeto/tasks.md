@@ -4,8 +4,9 @@ Tarefas para implementar no futuro, no estilo de um board do Jira. A fonte
 principal é o `diagnostico.md` (IDs originais C/A/M/I entre parênteses),
 somada aos ajustes encontrados ao testar o `docserver watch`.
 
-> Última revisão: 2026-09-15 · Tarefas de prioridade alta 001–009 concluídas na branch
-> `feat/prioridade-alta`.
+> Última revisão: 2026-09-17 · Tarefas de prioridade alta 001–009 concluídas na branch
+> `feat/prioridade-alta`. TASK-052 a TASK-054 vieram da investigação do
+> `CONNECT_TIMEOUT` ao conectar no servidor MCP (2026-09-17).
 > Os achados C1–C6 do diagnóstico já foram
 > resolvidos (commit `6cdb0aa`) e não aparecem aqui, exceto a parte pendente do C3.
 
@@ -43,6 +44,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-009 | Reranker cross-encoder sobre os candidatos fundidos | Busca | 🔴 Alta | G | Concluída |
 | TASK-010 | Autenticação por token no modo HTTP | Segurança | 🔴 Alta | M | Backlog |
 | TASK-011 | `docker-compose.yml` sem TTY e `DEPLOY.md` atualizado sobre HTTP | Infra | 🔴 Alta | P | Backlog |
+| TASK-052 | Aquecer os modelos sem segurar o handshake MCP | Servidor MCP | 🔴 Alta | P | Concluída |
 | TASK-012 | Eliminar o `UnicodeDecodeError` da verificação do Tesseract | Extração | 🟡 Média | P | Concluída |
 | TASK-013 | Troca atômica do índice e de `docs-normalizado` | Ingestão | 🟡 Média | M | Backlog |
 | TASK-014 | Servidor abre o índice somente leitura e sem escrita em consultas | Servidor MCP | 🟡 Média | P | Backlog |
@@ -66,6 +68,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-031 | Versão de Python de referência e CI no GitHub Actions | Infra | 🟡 Média | M | Backlog |
 | TASK-032 | Revisão fixa do modelo de embeddings | Infra | 🟡 Média | P | Backlog |
 | TASK-033 | Teste E2E do servidor com cliente MCP e cwds diferentes | Testes | 🟡 Média | M | Backlog |
+| TASK-053 | Eliminar as chamadas de rede no startup do servidor | Servidor MCP | 🟡 Média | P | Backlog |
 | TASK-034 | Overlap de chunks por frase | Chunking | 🟢 Baixa | P | Backlog |
 | TASK-035 | Remover o custo quadrático da tokenização no chunking | Chunking | 🟢 Baixa | M | Backlog |
 | TASK-036 | Registrar qual contagem de tokens foi usada na ingestão | Chunking | 🟢 Baixa | P | Backlog |
@@ -83,9 +86,11 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-048 | Reduzir o tempo da suíte de testes rápida | Testes | 🟢 Baixa | P | Backlog |
 | TASK-049 | Remover código morto em `formatar_tabela_avaliacao` | CLI | 🟢 Baixa | P | Concluída |
 | TASK-050 | `docserver stats` mostrar a data da ingestão | CLI | 🟢 Baixa | P | Backlog |
+| TASK-054 | Corrigir o registro do servidor em `.vscode/mcp.json` | Infra | 🟢 Baixa | P | Backlog |
 
 ### Ordem sugerida
 
+0. **Bloqueia o uso do servidor por um cliente MCP:** TASK-052 (feita: sem ela o `initialize` estourava os 30 s do cliente), depois TASK-053.
 1. **Rápidas e de alto impacto:** TASK-002, TASK-003, TASK-004, TASK-011, TASK-012.
 2. **Uso por agentes:** TASK-001, TASK-006.
 3. **Base para mexer na busca:** TASK-007 (sem avaliação ampla, as mudanças de busca são às cegas), depois TASK-008 e TASK-009.
@@ -376,6 +381,24 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Contexto:** a docstring tem ~200 palavras e é consumida em toda conversa.
 - **Critérios de aceite:** docstring curta; a orientação de fluxo fica em `FastMCP(instructions=...)`; `docs/AGENTES.md` atualizado.
 
+### TASK-052 · Aquecer os modelos sem segurar o handshake MCP
+- **Prioridade:** 🔴 Alta · **Esforço:** P · **Tipo:** bug · **Status:** Concluída (2026-09-17)
+- **Origem:** investigação do `CONNECT_TIMEOUT` no Claude Code (2026-09-17)
+- **Contexto:** o cliente MCP não consegue conectar: `connection timed out after 30000ms`. O servidor não está quebrado — ele só demora demais para responder ao `initialize`. Em `server.main`, `_aquecer()` roda de forma síncrona **antes** de `mcp.run()` (`src/docserver/server.py:418-419`), então o processo só passa a falar o protocolo depois de carregar ~1 GB de pesos. Medido com um handshake real por stdio: **185,9 s** numa execução e **259,3 s** noutra, contra o limite de 30 s do cliente. Repartição: import 3,1 s · embeddings e5-small 163,7–248,6 s · reranker mMiniLM 4,9–7,6 s · banner do FastMCP ~3 s. O `--sem-aquecimento` já existe (`cli.py:915`), mas só empurra o custo para a primeira busca, que então estoura o timeout da tool.
+- **O que fazer:** subir `mcp.run()` imediatamente e mover `_aquecer()` para uma thread daemon iniciada antes dele, mantendo o comportamento síncrono atual sob uma flag para os testes e para a ingestão. As tools que dependem do modelo continuam corretas porque `embed.obter_modelo` e `rerank.obter_modelo` já serializam o carregamento por cache; confirmar que uma busca chegando durante o aquecimento espera o modelo em vez de falhar ou de carregá-lo duas vezes. Nada do aquecimento pode escrever no stdout no modo stdio.
+- **Critérios de aceite:** o `initialize` é respondido em menos de 10 s com o aquecimento ligado; uma busca disparada durante o aquecimento devolve resultado vetorial (não o fallback léxico) e o modelo é carregado uma única vez; teste E2E de handshake cronometrado (ver TASK-033).
+- **Nota sobre a máquina de teste:** i5-10210U com 7,9 GB de RAM e apenas 0,1 GB livre durante a medição (o navegador sozinho ocupava ~2,9 GB). Carregar ~1 GB de pesos nessa condição vira paginação em disco: mesmo com `HF_HUB_OFFLINE=1` o modelo levou 111,3 s para ser construído, enquanto o `encode` em si leva 1,5 s. Isso agrava o problema, mas não é a causa — a causa é o aquecimento bloquear o handshake. Em qualquer máquina, carregar os modelos antes de `mcp.run()` deixa o startup refém do hardware.
+- **Relacionada:** TASK-053 (soma no mesmo startup), TASK-033 (o teste E2E teria pego isto), TASK-046 (warm-up na imagem Docker).
+- **Resultado:** em stdio o `_aquecer()` passou a rodar numa thread daemon iniciada antes do `mcp.run()`; em HTTP continua síncrono, porque ali o link só é anunciado depois do `run` e quem conectar já encontra o modelo pronto. `embed.obter_modelo` e `rerank.obter_modelo` ganharam um lock com dupla checagem: antes o cache sozinho não bastava, já que aquecimento e busca agora correm em threads diferentes. Medido com o mesmo handshake real por stdio: **initialize em 7,9 s** (era 185,9 s e 259,3 s), e uma busca disparada durante o aquecimento devolveu resultado vetorial (similaridade 0,90), não o fallback léxico, com o modelo carregado uma única vez. O aquecimento e as barras de progresso do `sentence_transformers` saem todos no stderr, então o stdout do protocolo continua limpo. Falta só o teste E2E cronometrado de ponta a ponta, que fica com a TASK-033; a regressão está coberta por testes de unidade em `tests/test_server.py`.
+
+### TASK-053 · Eliminar as chamadas de rede no startup do servidor
+- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** melhoria · **Status:** Backlog
+- **Origem:** investigação do `CONNECT_TIMEOUT` no Claude Code (2026-09-17)
+- **Contexto:** mesmo com os dois modelos já em cache local (470 MB cada, nada é baixado), o startup vai à rede. No stderr aparecem `GET https://huggingface.co/api/agent-harnesses` (telemetria do Hugging Face) e `GET https://pypi.org/pypi/fastmcp/json` (checagem de atualização do FastMCP). Comparando as medições, construir o modelo de embeddings levou **111,3 s** com `HF_HUB_OFFLINE=1` contra **163,7–248,6 s** com rede: a espera de rede responde por 50 a 135 s do startup. Sem rede, o `local_files_only=True` de `embed._carregar_modelo` já evita o Hub, mas o fallback do `except` e a telemetria passam por fora dele.
+- **O que fazer:** definir no próprio processo (antes de importar `sentence_transformers`) `HF_HUB_DISABLE_TELEMETRY=1` e `FASTMCP_CHECK_FOR_UPDATES=off`; avaliar `HF_HUB_OFFLINE=1` como padrão do `serve`, com uma env para reativar quando for preciso baixar um modelo novo. Documentar em `docs/DEPLOY.md` e registrar as envs no `docker-compose.yml`.
+- **Critérios de aceite:** nenhuma requisição HTTP durante `docserver serve` com os modelos em cache; o startup continua funcionando numa máquina sem rede; o tempo de aquecimento medido antes e depois fica registrado no PR.
+- **Relacionada:** TASK-032 (revisão fixa do modelo), TASK-052.
+
 ---
 
 ## Épico: Segurança e infraestrutura
@@ -427,6 +450,14 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Contexto:** `data/indice.db` e `docs-normalizado/` contêm o texto integral dos PDFs (inclusive um livro comercial), mesmo com os PDFs no `.gitignore`.
 - **Critérios de aceite:** nota no README e em `DEPLOY.md`; conferir que `data/` e `docs-normalizado/` não vão para a imagem Docker nem para o Git por padrão.
 
+### TASK-054 · Corrigir o registro do servidor em `.vscode/mcp.json`
+- **Prioridade:** 🟢 Baixa · **Esforço:** P · **Tipo:** bug · **Status:** Backlog
+- **Origem:** investigação do `CONNECT_TIMEOUT` no Claude Code (2026-09-17)
+- **Contexto:** o servidor está registrado como `dockserver` (com "k") em vez de `docserver`, e os args não passam `--docs-fonte`, ao contrário do registro usado pelo Claude Code. O nome errado vira o prefixo das tools no VS Code e não bate com o que a documentação manda procurar.
+- **O que fazer:** renomear a chave para `docserver`, alinhar os args ao registro de referência e conferir se o arquivo deveria mesmo estar versionado (ele fixa caminhos absolutos `D:\TI\RAG\...`, que só valem nesta máquina) — se ficar, documentar isso; se não, entrar no `.gitignore` com um exemplo em `docs/`.
+- **Critérios de aceite:** o VS Code conecta no servidor pelo nome `docserver`; os caminhos absolutos ou saem do repositório ou estão documentados como específicos da máquina.
+- **Relacionada:** TASK-052 (este registro sofre do mesmo startup lento).
+
 ---
 
 ## Épico: Testes e CLI
@@ -476,3 +507,4 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | — | Watcher ignora eventos de último acesso (cada ingestão disparava a próxima) | 2026-09-15 | `c5aa97c` |
 | TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |
 | TASK-009 | Reranker cross-encoder (mMiniLM por padrão, calibrado pela avaliação) | 2026-09-15 | `d736053`, `a23f5b6` |
+| TASK-052 | Aquecimento em thread no stdio: `initialize` caiu de ~186–259 s para 7,9 s | 2026-09-17 | `PENDENTE` |

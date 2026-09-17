@@ -1,3 +1,5 @@
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -568,3 +570,80 @@ def test_formatar_paginas():
     assert cli.formatar_paginas({}) is None
     assert cli.formatar_paginas({"pagina_inicio": 4, "pagina_fim": 4}) == "p. 4"
     assert cli.formatar_paginas({"pagina_inicio": 4, "pagina_fim": 6}) == "pp. 4–6"
+
+
+def test_serve_stdio_nao_espera_o_aquecimento_para_falar_o_protocolo(monkeypatch):
+    """O cliente MCP desiste do `initialize` em 30 s e o aquecimento leva minutos:
+    em stdio ele tem que rodar em paralelo ao `mcp.run`, nunca antes dele."""
+    liberar = threading.Event()
+    aquecimento_comecou = threading.Event()
+    aquecimento_terminou = threading.Event()
+    chamadas = []
+
+    def _aquecer_lento(caminho_indice):
+        aquecimento_comecou.set()
+        liberar.wait(5)
+        aquecimento_terminou.set()
+
+    monkeypatch.setattr(server, "_aquecer", _aquecer_lento)
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: chamadas.append(kwargs))
+
+    try:
+        server.main()
+
+        # o `run` já rodou com o aquecimento ainda preso: é isso que salva o handshake
+        assert chamadas == [{"transport": "stdio"}]
+        assert not aquecimento_terminou.is_set(), "o `run` esperou o aquecimento terminar"
+        assert aquecimento_comecou.wait(5), "o aquecimento nem chegou a começar"
+    finally:
+        liberar.set()
+
+
+def test_serve_http_aquece_antes_de_anunciar_o_link(monkeypatch):
+    """Em HTTP o link só aparece depois do `run`: dá para aquecer antes, e quem
+    conectar já encontra o modelo pronto."""
+    eventos = []
+
+    monkeypatch.setattr(server, "_aquecer", lambda caminho_indice: eventos.append("aquecer"))
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: eventos.append("run"))
+
+    server.main(transporte="http")
+
+    assert eventos == ["aquecer", "run"]
+
+
+def test_serve_sem_aquecimento_nao_dispara_a_thread(monkeypatch):
+    eventos = []
+
+    monkeypatch.setattr(server, "_aquecer", lambda caminho_indice: eventos.append("aquecer"))
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: eventos.append("run"))
+
+    server.main(aquecer=False)
+
+    assert eventos == ["run"]
+
+
+def test_modelo_de_embeddings_carrega_uma_vez_so_com_threads_concorrentes(monkeypatch):
+    """Aquecimento e buscas rodam em threads diferentes: sem o lock, cada uma
+    construiria sua própria cópia dos pesos."""
+    carregamentos = []
+
+    def _carregar_devagar():
+        carregamentos.append(1)
+        time.sleep(0.05)
+        return object()
+
+    monkeypatch.setattr(embed, "_carregar_modelo", _carregar_devagar)
+    monkeypatch.setattr(embed, "_modelo_cache", None)
+
+    obtidos = []
+    threads = [
+        threading.Thread(target=lambda: obtidos.append(embed.obter_modelo())) for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+
+    assert len(carregamentos) == 1
+    assert len({id(m) for m in obtidos}) == 1

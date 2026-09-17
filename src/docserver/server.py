@@ -416,7 +416,17 @@ def main(
     _persistente["ativa"] = True
     try:
         if aquecer:
-            _aquecer(_config["indice"])
+            if transporte == "stdio":
+                # O cliente MCP desiste do handshake em ~30 s, e o aquecimento leva mais
+                # de 60 s em CPU: carregar os modelos antes do `run` derrubava a conexão
+                # com CONNECT_TIMEOUT. Em background, o servidor responde na hora e as
+                # primeiras buscas esperam só o que faltar do carregamento.
+                threading.Thread(
+                    target=_aquecer, args=(_config["indice"],), daemon=True
+                ).start()
+            else:
+                # Em HTTP o link só é anunciado depois: quem conectar já encontra tudo pronto.
+                _aquecer(_config["indice"])
         if transporte == "stdio":
             # stdio não aceita host/porta: o cliente sobe o processo diretamente e fala
             # pelos streams padrão, sem rede — por isso nunca há um link para esse modo.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import os
+import threading
 
 from docserver import embed
 
@@ -28,6 +29,8 @@ MAX_CARACTERES_TRECHO = 2000
 TAMANHO_LOTE = 8
 
 _cache: dict[str, object] = {}
+# mesma razão do lock em embed.py: aquecimento e buscas concorrem por este cache.
+_lock_cache = threading.Lock()
 
 
 def reranker_configurado() -> str | None:
@@ -60,10 +63,12 @@ def obter_modelo(chave: str):
     cada busca repetiria segundos de tentativa (e de acesso à rede) antes do fallback."""
     nome = MODELOS_RERANKER.get(chave, chave)
     if nome not in _cache:
-        try:
-            _cache[nome] = _carregar(nome)
-        except Exception as erro:  # noqa: BLE001 — quem chama decide o fallback
-            _cache[nome] = erro
+        with _lock_cache:
+            if nome not in _cache:
+                try:
+                    _cache[nome] = _carregar(nome)
+                except Exception as erro:  # noqa: BLE001 — quem chama decide o fallback
+                    _cache[nome] = erro
     modelo = _cache[nome]
     if isinstance(modelo, Exception):
         raise modelo

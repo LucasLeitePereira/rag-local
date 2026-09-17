@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
+import threading
 
 NOME_MODELO = "intfloat/multilingual-e5-small"
 DIMENSAO = 384
 
 _modelo_cache = None
+# O aquecimento do servidor roda numa thread e as buscas, em outras: sem o lock, duas
+# chamadas simultâneas carregariam o modelo duas vezes (dobrando tempo e memória).
+_lock_modelo = threading.Lock()
 
 
 def _carregar_modelo():
@@ -25,7 +29,9 @@ def obter_modelo():
     """Carrega o modelo de embeddings uma única vez e reutiliza a instância."""
     global _modelo_cache
     if _modelo_cache is None:
-        _modelo_cache = _carregar_modelo()
+        with _lock_modelo:
+            if _modelo_cache is None:
+                _modelo_cache = _carregar_modelo()
     return _modelo_cache
 
 
