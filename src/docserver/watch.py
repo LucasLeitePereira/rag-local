@@ -113,7 +113,17 @@ class _Manipulador(FileSystemEventHandler):
 
 
 def _ingerir_e_relatar(docs_fonte: Path, docs_normalizado: Path, indice: str, sem_embeddings: bool) -> None:
-    relatorio = cli.executar_ingestao(docs_fonte, docs_normalizado, indice, sem_embeddings=sem_embeddings)
+    relatorio = cli.executar_ingestao(
+        docs_fonte,
+        docs_normalizado,
+        indice,
+        sem_embeddings=sem_embeddings,
+        # uma reingestão pode levar minutos: sem progresso, o watcher fica mudo o tempo todo
+        progresso_fn=_log,
+        # se um `docserver ingest` manual estiver rodando, o watcher espera em vez de
+        # desistir — a mudança que o acordou continuaria pendente de qualquer forma
+        esperar_lock=cli.ESPERA_LOCK_WATCHER,
+    )
     print(cli.formatar_relatorio(relatorio), flush=True)
 
 

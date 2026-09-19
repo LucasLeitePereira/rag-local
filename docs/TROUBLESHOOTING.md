@@ -44,6 +44,21 @@ em `docs/INGESTAO.md`):
   `--docs-fonte` e o diretório de onde o comando foi executado.
 - **"nenhum arquivo em formato suportado"** ou **"não gerou nenhum chunk"** —
   se a intenção é mesmo esvaziar o índice, repita com `--forcar`.
+- **"outra ingestão já está em andamento (PID N)"** — um `docserver watch` ou
+  outro `docserver ingest` está usando o índice. Espere terminar, ou pare o
+  watcher. O lock é do sistema operacional: se o processo N já morreu, ele não
+  existe mais e a próxima tentativa entra normalmente — **não** apague o
+  `data/indice.db.lock` à mão para "destravar".
+
+## A ingestão foi morta no meio (Ctrl+C, queda de energia)
+
+Nada a fazer: rode `docserver ingest` de novo. Os `.md` normalizados só são
+movidos para `docs-normalizado/` depois que o índice foi gravado, então disco e
+índice ficam no estado anterior, consistentes entre si.
+
+Uma pasta `.docs-normalizado.tmp-*` ao lado de `docs-normalizado/` é resto de uma
+ingestão morta à força e pode ser apagada; a ingestão seguinte já faz isso
+sozinha.
 
 ## "Aviso: busca semântica indisponível (...)"
 

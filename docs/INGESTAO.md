@@ -27,6 +27,37 @@ reconstruído do zero", quando:
 A gravação é uma única transação: se algo falhar no meio, o índice anterior fica
 intacto. Para forçar o reprocessamento de tudo, use `--limpar`.
 
+### Tudo ou nada: índice e `docs-normalizado` trocam juntos
+
+Os `.md` normalizados são escritos numa pasta temporária irmã de
+`docs-normalizado/` (`.docs-normalizado.tmp-<pid>-<id>/`) e só são movidos para o
+lugar definitivo **depois** que a transação do índice foi gravada, com
+`os.replace`. Matar a ingestão no meio — inclusive durante os embeddings, que é
+a etapa longa — deixa disco e índice exatamente como estavam.
+
+Sem isso, os `.md` novos já estariam no disco enquanto o índice ainda apontava
+para os chunks antigos: durante os minutos de uma reingestão, `ler_documento`
+serviria o texto novo e `buscar` devolveria trechos do texto velho.
+
+Uma pasta temporária só sobra quando o processo é morto à força (`kill -9`), que
+não chega a rodar a limpeza; a ingestão seguinte apaga o que sobrou.
+
+### Uma ingestão por vez
+
+Um lock de arquivo ao lado do índice (`data/indice.db.lock`) garante que só uma
+ingestão mexa em `docs-normalizado/` e no índice de cada vez:
+
+- `docserver ingest` com outra ingestão em andamento **aborta na hora**, com
+  código de saída 1 e uma mensagem informando o PID de quem segura o lock. Nada
+  é alterado. Isso cobre também o `--limpar`.
+- `docserver watch` **espera** (até 5 minutos) em vez de desistir: a mudança que
+  o acordou continuaria pendente de qualquer forma.
+
+O lock é mantido pelo sistema operacional (`fcntl.flock` no Linux e no macOS,
+`msvcrt.locking` no Windows), não pelo conteúdo do arquivo. Se o processo dono
+morrer — `kill -9`, queda de energia —, o lock cai junto: um `.lock` esquecido no
+disco nunca bloqueia a próxima ingestão, e não há nada para limpar à mão.
+
 **Remover um arquivo de `docs-fonte/` e rodar `docserver ingest` já basta** —
 a ingestão apaga automaticamente o `.md` correspondente em
 `docs-normalizado/` (e o retira do índice) quando a fonte original não existe
@@ -42,7 +73,41 @@ Flags úteis:
 docserver ingest --limpar           # remove os .md gerados e esvazia o índice: reprocessa tudo
 docserver ingest --sem-embeddings   # pula a camada vetorial — ingestão bem mais rápida em dev
 docserver ingest --forcar           # permite esvaziar o índice (ver "Proteções contra perda de dados")
+docserver ingest --silencioso       # só o relatório final, sem o progresso por arquivo
 ```
+
+### Acompanhar o progresso
+
+Uma reingestão pode levar minutos — um PDF de 16 MB sozinho passa dos 15. Por
+isso a ingestão informa em que ponto está:
+
+```
+extração: 1 arquivo(s) a processar, 11 inalterado(s)
+[1/1] extraindo 2020-Scrum-Guide-PortugueseBR-3.0.pdf (266 KB)…
+[1/1] 2020-Scrum-Guide-PortugueseBR-3.0.pdf: 29 chunks em 43.0s
+embeddings: 29 chunk(s)
+embeddings 25/29
+embeddings 29/29
+gravando o índice
+```
+
+A numeração conta só os arquivos que serão reprocessados, não os inalterados. O
+relatório final fecha com o tempo de cada etapa e o arquivo mais lento, o que
+mostra de imediato se o gargalo é a extração ou os embeddings:
+
+```
+Tempo por etapa:
+  Extração:    43.0s
+  Embeddings:  20.1s
+  Índice:       1.3s
+  Troca:        0.0s
+  Arquivo mais lento: docs-fonte	este.pdf (43.0s)
+```
+
+No `docserver watch` as mesmas linhas saem prefixadas com `docserver:`. Em
+código, `cli.executar_ingestao(..., progresso_fn=...)` recebe uma função que é
+chamada com cada linha; sem ela a ingestão é silenciosa, que é o que o modo
+stdio do servidor MCP exige (nada pode ir para o stdout).
 
 ### Nomes dos arquivos normalizados
 
@@ -116,10 +181,16 @@ Como funciona:
 - **Embeddings em cache.** O modelo é carregado uma vez no processo do watcher,
   então só a primeira ingestão paga esse custo. Use `docserver watch
   --sem-embeddings` para ingestões só léxicas.
+- **Progresso.** Cada etapa e cada arquivo viram uma linha `docserver: ...`, em
+  vez de o watcher ficar mudo durante toda a reingestão.
 - **Convivência com o servidor.** Os embeddings são calculados antes de abrir o
-  índice, e a troca dos chunks acontece numa única transação SQLite: o servidor
-  vê o índice antigo ou o novo, nunca um meio-termo. Não rode `docserver ingest`
-  manualmente enquanto o watcher estiver ativo.
+  índice, a troca dos chunks acontece numa única transação SQLite e os `.md` só
+  vão para `docs-normalizado/` depois dela: o servidor vê o estado antigo ou o
+  novo, nunca um meio-termo.
+- **Convivência com o `ingest` manual.** Um `docserver ingest` rodado com o
+  watcher ativo aborta na hora por causa do lock (ver "Uma ingestão por vez"), e
+  o watcher espera a vez dele. Ainda assim, o normal é deixar o watcher cuidar
+  de tudo.
 
 Os argumentos globais valem igual ao `ingest`:
 `docserver --docs-fonte outra/pasta --indice outro.db watch`.

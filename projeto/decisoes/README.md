@@ -12,6 +12,9 @@
 | [0008](0008-watcher-filtra-eventos-por-stat.md) | Watcher ignora `modified` sem mudança de tamanho ou mtime | 2026-09-15 | Aceita | — |
 | [0009](0009-leitura-em-partes-e-ler-trecho.md) | `ler_documento` em partes e por seção; nova tool `ler_trecho` | 2026-09-15 | Aceita | TASK-001 |
 | [0010](0010-reranker-mminilm-padrao.md) | Reranker mMiniLM ligado por padrão, `RERANK_MINIMO` 0.01 | 2026-09-15 | Aceita | TASK-009 |
+| [0011](0011-troca-atomica-por-pasta-temporaria.md) | `docs-normalizado` trocado por pasta temporária, depois do commit do índice | 2026-09-19 | Aceita | TASK-013 |
+| [0012](0012-lock-de-arquivo-para-uma-ingestao-por-vez.md) | Lock de arquivo do SO para uma ingestão por vez | 2026-09-19 | Aceita | TASK-016 |
+| [0013](0013-progresso-da-ingestao-por-callback.md) | Progresso da ingestão por callback injetável | 2026-09-19 | Aceita | TASK-051 |
 
 Decisões anteriores a 2026-09-15 (SQLite único com FTS5 + sqlite-vec, fusão
 RRF, stdio antes de HTTP, modelo local `multilingual-e5-small`, chunks por

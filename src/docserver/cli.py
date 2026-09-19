@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import os
+import shutil
 import sys
+import threading
 import time
+import uuid
 from pathlib import Path
 
 from docserver import chunk, embed, extract, index, rerank
@@ -23,6 +28,12 @@ PORTA_SERVER_MCP = 8765
 
 MIN_CARACTERES_SUSPEITO = 20
 
+# De quanto em quanto tempo uma ingestão que espera pelo lock tenta de novo, e quanto
+# o watcher espera por padrão antes de desistir (ele pode tentar outra vez na próxima
+# mudança; já o `ingest` manual aborta na hora, para o usuário saber o que houve).
+INTERVALO_LOCK = 0.2
+ESPERA_LOCK_WATCHER = 300.0
+
 MENSAGEM_SEM_RESULTADOS = (
     "Nenhum trecho relevante encontrado. Tente reformular a consulta "
     "(termo técnico exato ou pergunta em linguagem natural), restrinja a um "
@@ -37,6 +48,124 @@ class ErroIngestao(Exception):
 
 def _deve_ignorar(caminho: Path) -> bool:
     return caminho.name.startswith(".") or caminho.name.startswith("~$")
+
+
+def caminho_do_lock(caminho_indice: str) -> Path:
+    return Path(f"{caminho_indice}.lock")
+
+
+def _travar_fd(fd: int) -> None:
+    """Lock exclusivo e não bloqueante sobre o primeiro byte do arquivo. É o SO que o
+    mantém: se o processo dono morrer (kill, queda de energia), o lock cai junto e a
+    próxima ingestão entra normalmente — um `.lock` órfão no disco não bloqueia nada."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _destravar_fd(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+def _gravar_pid(fd: int) -> None:
+    """Grava o PID do dono a partir do byte 1 — o byte 0 é o que fica travado, e no
+    Windows ler um trecho travado por outro processo falha."""
+    try:
+        pid = str(os.getpid()).encode("utf-8")
+        os.lseek(fd, 1, os.SEEK_SET)
+        os.write(fd, pid)
+        os.ftruncate(fd, 1 + len(pid))
+    except OSError:
+        pass
+
+
+def _dono_do_lock(caminho_lock: Path) -> str:
+    """Sufixo com o PID que o dono gravou no arquivo — só para a mensagem de erro."""
+    try:
+        fd = os.open(caminho_lock, os.O_RDONLY)
+        try:
+            os.lseek(fd, 1, os.SEEK_SET)
+            conteudo = os.read(fd, 32).decode("utf-8", "replace").strip()
+        finally:
+            os.close(fd)
+    except OSError:
+        return ""
+    return f" (PID {conteudo})" if conteudo.isdigit() else ""
+
+
+# Reentrância por thread: `ingest --limpar` segura o lock durante a limpeza e
+# `executar_ingestao` volta a pedi-lo logo em seguida. Sem esta contagem, o segundo
+# pedido bateria no lock do próprio processo. A chave inclui a thread de propósito —
+# duas threads ingerindo ao mesmo tempo é exatamente o que o lock existe para impedir.
+_locks_do_processo: dict[tuple[str, int], int] = {}
+_mutex_locks = threading.Lock()
+
+
+@contextlib.contextmanager
+def travar_ingestao(caminho_indice: str, esperar: float = 0.0):
+    """Garante uma ingestão por vez sobre o mesmo índice (watcher + `ingest` manual).
+
+    Sem `esperar`, a segunda ingestão levanta `ErroIngestao` na hora; com `esperar`,
+    ela tenta de novo por esse tempo antes de desistir."""
+    caminho_lock = caminho_do_lock(caminho_indice)
+    caminho_lock.parent.mkdir(parents=True, exist_ok=True)
+    chave = (os.path.normcase(str(caminho_lock.resolve())), threading.get_ident())
+
+    with _mutex_locks:
+        reentrante = _locks_do_processo.get(chave, 0) > 0
+        if reentrante:
+            _locks_do_processo[chave] += 1
+    if reentrante:
+        try:
+            yield caminho_lock
+        finally:
+            with _mutex_locks:
+                _locks_do_processo[chave] -= 1
+        return
+
+    fd = os.open(caminho_lock, os.O_CREAT | os.O_RDWR)
+    limite = time.monotonic() + max(esperar, 0.0)
+    while True:
+        try:
+            _travar_fd(fd)
+            break
+        except OSError:
+            if time.monotonic() >= limite:
+                os.close(fd)
+                raise ErroIngestao(
+                    f"outra ingestão já está em andamento{_dono_do_lock(caminho_lock)} e segura "
+                    f"o lock {caminho_lock}. Nada foi alterado. Espere ela terminar, ou pare o "
+                    "`docserver watch` antes de rodar `docserver ingest`."
+                ) from None
+            time.sleep(INTERVALO_LOCK)
+
+    _gravar_pid(fd)
+    with _mutex_locks:
+        _locks_do_processo[chave] = 1
+    try:
+        yield caminho_lock
+    finally:
+        with _mutex_locks:
+            _locks_do_processo.pop(chave, None)
+        _destravar_fd(fd)
+        os.close(fd)
 
 
 def validar_docs_fonte(docs_fonte: Path) -> None:
@@ -109,6 +238,39 @@ def _motivo_reconstrucao(conexao, sem_embeddings: bool, nome_modelo: str | None)
     return None
 
 
+def _formatar_tamanho(bytes_: int) -> str:
+    if bytes_ >= 1 << 20:
+        return f"{bytes_ / (1 << 20):.1f} MB"
+    return f"{max(bytes_ // 1024, 1)} KB"
+
+
+def _pasta_temporaria(docs_normalizado: Path) -> Path:
+    """Pasta irmã de `docs-normalizado` — mesmo sistema de arquivos, requisito do
+    `os.replace` usado para promover os arquivos ao final."""
+    base = Path(docs_normalizado)
+    return base.parent / f".{base.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _limpar_temporarias(docs_normalizado: Path) -> None:
+    """Remove pastas temporárias de ingestões anteriores. Só é chamada com o lock na
+    mão, então nenhuma delas pode estar em uso: o que sobrou veio de um processo morto
+    à força, que não chegou a rodar o próprio `finally`."""
+    base = Path(docs_normalizado)
+    for pasta in base.parent.glob(f".{base.name}.tmp-*"):
+        if pasta.is_dir():
+            shutil.rmtree(pasta, ignore_errors=True)
+
+
+def _promover_normalizados(temporaria: Path, docs_normalizado: Path) -> None:
+    """Move para `docs-normalizado` os `.md` desta ingestão, só depois de o índice ter
+    sido gravado. Se a ingestão cair antes — na extração ou nos embeddings, que é a
+    etapa longa —, disco e índice ficam exatamente como estavam."""
+    for arquivo in sorted(p for p in temporaria.rglob("*.md") if p.is_file()):
+        destino = Path(docs_normalizado) / arquivo.relative_to(temporaria)
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(arquivo, destino)
+
+
 def executar_ingestao(
     docs_fonte: Path,
     docs_normalizado: Path,
@@ -117,6 +279,8 @@ def executar_ingestao(
     embeddar_passagem_fn=None,
     nome_modelo: str | None = None,
     forcar: bool = False,
+    progresso_fn=None,
+    esperar_lock: float = 0.0,
 ) -> dict:
     """Pipeline incremental. Só extrai, divide e gera embeddings dos arquivos novos ou
     alterados (sha256 diferente do registrado no índice); os inalterados ficam como
@@ -124,11 +288,24 @@ def executar_ingestao(
     Reprocessa tudo quando o índice está em formato antigo, o modelo de embeddings
     mudou ou há chunks sem vetor numa ingestão com embeddings.
 
-    Levanta `ErroIngestao` — sem tocar no índice — se `docs_fonte` não existe, ou (a
-    menos que `forcar`) se não há nenhum arquivo suportado ou se o resultado
-    esvaziaria um índice que tinha conteúdo."""
+    Uma ingestão por vez: um lock ao lado do índice faz a segunda abortar (ou esperar
+    `esperar_lock` segundos). Os `.md` normalizados são escritos numa pasta temporária
+    e só vão para `docs-normalizado` depois que o índice foi gravado, de modo que uma
+    queda no meio não dessincroniza disco e índice.
+
+    `progresso_fn` recebe uma linha de texto por etapa e por arquivo processado; sem
+    ele a ingestão só fala no fim (é o que o modo stdio do servidor precisa).
+
+    Levanta `ErroIngestao` — sem tocar no índice — se `docs_fonte` não existe, se
+    outra ingestão está em andamento, ou (a menos que `forcar`) se não há nenhum
+    arquivo suportado ou se o resultado esvaziaria um índice que tinha conteúdo."""
     validar_docs_fonte(docs_fonte)
     inicio = time.perf_counter()
+
+    def avisar(mensagem: str) -> None:
+        if progresso_fn is not None:
+            progresso_fn(mensagem)
+
     relatorio = {
         "processados": 0,
         "novos": [],
@@ -143,6 +320,8 @@ def executar_ingestao(
         "removidos": [],
         "preservados": [],
         "reconstrucao": None,
+        "tempos": {},
+        "mais_lento": None,
     }
 
     suportados: list[Path] = []
@@ -160,110 +339,169 @@ def executar_ingestao(
             "Nada foi alterado; use --forcar se a intenção é mesmo esvaziar o índice."
         )
 
-    conexao = index.criar_indice(caminho_indice)
-    try:
-        relatorio["reconstrucao"] = _motivo_reconstrucao(conexao, sem_embeddings, nome_modelo)
-        registrados = {} if relatorio["reconstrucao"] else index.arquivos_registrados(conexao)
-        chunks_atuais = conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-
-        novos_chunks: list[dict] = []
-        registros: list[dict] = []
-        mantidas: set[str] = set()
-        chunks_mantidos = 0
-        gerados: set[Path] = set()
-        destinos: dict[str, Path] = {}
-        for caminho in suportados:
-            destino = extract.caminho_normalizado_para(caminho, docs_fonte, docs_normalizado)
-            # em sistemas de arquivos que ignoram maiúsculas, `Guia.md` e `guia.md` de
-            # pastas espelhadas cairiam no mesmo arquivo — o segundo sobrescreveria o primeiro.
-            chave = str(destino.resolve()).casefold()
-            if chave in destinos:
-                relatorio["falhas"].append(
-                    (str(caminho), f"colide com {destinos[chave]} no mesmo arquivo normalizado ({destino})")
-                )
-                continue
-
-            origem = extract.origem_para(caminho, docs_fonte)
-            sha256 = _sha256(caminho)
-            registro = registrados.get(origem)
-            if registro and registro["sha256"] == sha256 and destino.is_file():
-                destinos[chave] = caminho
-                gerados.add(destino.resolve())
-                mantidas.add(origem)
-                chunks_mantidos += registro["chunks"]
-                relatorio["inalterados"] += 1
-                continue
-
+    with travar_ingestao(caminho_indice, esperar=esperar_lock):
+        _limpar_temporarias(docs_normalizado)
+        temporaria = _pasta_temporaria(docs_normalizado)
+        temporaria.mkdir(parents=True, exist_ok=True)
+        try:
+            conexao = index.criar_indice(caminho_indice)
             try:
-                caminho_normalizado_arquivo = extract.normalizar(caminho, docs_fonte, docs_normalizado)
-            except Exception as erro:
-                relatorio["falhas"].append((str(caminho), str(erro)))
-                continue
+                relatorio["reconstrucao"] = _motivo_reconstrucao(conexao, sem_embeddings, nome_modelo)
+                if relatorio["reconstrucao"]:
+                    avisar(f"reconstruindo o índice do zero: {relatorio['reconstrucao']}")
+                registrados = {} if relatorio["reconstrucao"] else index.arquivos_registrados(conexao)
+                chunks_atuais = conexao.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
-            destinos[chave] = caminho
-            gerados.add(caminho_normalizado_arquivo.resolve())
-            relatorio["processados"] += 1
-            relatorio["alterados" if registro else "novos"].append(str(caminho))
-            meta, corpo = extract.ler_front_matter(caminho_normalizado_arquivo.read_text(encoding="utf-8"))
-            if len(extract.remover_marcadores_pagina(corpo)) < MIN_CARACTERES_SUSPEITO:
-                relatorio["suspeitos"].append(str(caminho))
+                mantidas: set[str] = set()
+                chunks_mantidos = 0
+                gerados: set[Path] = set()
+                destinos: dict[str, Path] = {}
 
-            chunks_arquivo = chunk.chunkar_arquivo(caminho_normalizado_arquivo, docs_normalizado)
-            novos_chunks.extend(chunks_arquivo)
-            registros.append(
-                {
-                    "caminho_origem": origem,
-                    "caminho_normalizado": caminho_normalizado_arquivo.resolve()
-                    .relative_to(Path(docs_normalizado).resolve())
-                    .as_posix(),
-                    "sha256": sha256,
-                    "tamanho": caminho.stat().st_size,
-                    "chunks": len(chunks_arquivo),
-                    "extrator": meta.get("extrator"),
-                    "ingerido_em": meta.get("ingerido_em"),
-                }
-            )
+                # 1ª passada: decide o que reprocessar. Separá-la da extração é o que
+                # permite numerar o progresso (`[3/11]`) pelo total real de trabalho.
+                a_processar: list[tuple[Path, Path, str, bool]] = []
+                for caminho in suportados:
+                    destino = extract.caminho_normalizado_para(caminho, docs_fonte, docs_normalizado)
+                    # em sistemas de arquivos que ignoram maiúsculas, `Guia.md` e `guia.md` de
+                    # pastas espelhadas cairiam no mesmo arquivo — o segundo sobrescreveria o primeiro.
+                    chave = str(destino.resolve()).casefold()
+                    if chave in destinos:
+                        relatorio["falhas"].append(
+                            (str(caminho), f"colide com {destinos[chave]} no mesmo arquivo normalizado ({destino})")
+                        )
+                        continue
+                    destinos[chave] = caminho
 
-        total_final = chunks_mantidos + len(novos_chunks)
-        if total_final == 0 and not forcar and chunks_atuais > 0:
-            raise ErroIngestao(
-                "a ingestão não gerou nenhum chunk e substituiria um índice que tem conteúdo. "
-                "Índice e docs-normalizado foram mantidos; use --forcar se a intenção é mesmo esvaziá-lo."
-            )
+                    origem = extract.origem_para(caminho, docs_fonte)
+                    sha256 = _sha256(caminho)
+                    registro = registrados.get(origem)
+                    if registro and registro["sha256"] == sha256 and destino.is_file():
+                        gerados.add(destino.resolve())
+                        mantidas.add(origem)
+                        chunks_mantidos += registro["chunks"]
+                        relatorio["inalterados"] += 1
+                        continue
+                    a_processar.append((caminho, destino, sha256, registro is not None))
 
-        reprocessadas = {r["caminho_origem"] for r in registros}
-        # origens no índice que não foram mantidas nem reprocessadas: fonte apagada,
-        # renomeada ou que passou a falhar na extração
-        relatorio["documentos_removidos"] = sorted(index.origens_indexadas(conexao) - mantidas - reprocessadas)
+                inicio_extracao = time.perf_counter()
+                avisar(
+                    f"extração: {len(a_processar)} arquivo(s) a processar, "
+                    f"{relatorio['inalterados']} inalterado(s)"
+                )
+                novos_chunks: list[dict] = []
+                registros: list[dict] = []
+                for numero, (caminho, destino, sha256, ja_registrado) in enumerate(a_processar, 1):
+                    tamanho = caminho.stat().st_size
+                    avisar(
+                        f"[{numero}/{len(a_processar)}] extraindo {caminho.name} "
+                        f"({_formatar_tamanho(tamanho)})…"
+                    )
+                    inicio_arquivo = time.perf_counter()
+                    try:
+                        arquivo_temporario = extract.normalizar(caminho, docs_fonte, temporaria)
+                    except Exception as erro:
+                        relatorio["falhas"].append((str(caminho), str(erro)))
+                        avisar(f"[{numero}/{len(a_processar)}] {caminho.name}: falhou — {erro}")
+                        continue
 
-        embeddings = None
-        if not sem_embeddings:
-            if embeddar_passagem_fn is not None:
-                embeddings = [embeddar_passagem_fn(c) for c in novos_chunks]
-            else:
-                embeddings = embed.embeddar_passagens(novos_chunks) if novos_chunks else []
+                    gerados.add(destino.resolve())
+                    relatorio["processados"] += 1
+                    relatorio["alterados" if ja_registrado else "novos"].append(str(caminho))
+                    meta, corpo = extract.ler_front_matter(arquivo_temporario.read_text(encoding="utf-8"))
+                    if len(extract.remover_marcadores_pagina(corpo)) < MIN_CARACTERES_SUSPEITO:
+                        relatorio["suspeitos"].append(str(caminho))
 
-        relatorio["camada_vetorial_removida"] = index.atualizar_indice(
-            conexao,
-            novos_chunks,
-            registros,
-            relatorio["documentos_removidos"],
-            embeddings=embeddings,
-            nome_modelo=nome_modelo,
-            reconstruir=bool(relatorio["reconstrucao"]),
-        )
-    finally:
-        conexao.close()
+                    chunks_arquivo = chunk.chunkar_arquivo(arquivo_temporario, temporaria)
+                    novos_chunks.extend(chunks_arquivo)
+                    registros.append(
+                        {
+                            "caminho_origem": extract.origem_para(caminho, docs_fonte),
+                            "caminho_normalizado": destino.resolve()
+                            .relative_to(Path(docs_normalizado).resolve())
+                            .as_posix(),
+                            "sha256": sha256,
+                            "tamanho": tamanho,
+                            "chunks": len(chunks_arquivo),
+                            "extrator": meta.get("extrator"),
+                            "ingerido_em": meta.get("ingerido_em"),
+                        }
+                    )
+                    decorrido = time.perf_counter() - inicio_arquivo
+                    if relatorio["mais_lento"] is None or decorrido > relatorio["mais_lento"][1]:
+                        relatorio["mais_lento"] = (str(caminho), decorrido)
+                    avisar(
+                        f"[{numero}/{len(a_processar)}] {caminho.name}: "
+                        f"{len(chunks_arquivo)} chunks em {decorrido:.1f}s"
+                    )
+                relatorio["tempos"]["extracao"] = time.perf_counter() - inicio_extracao
 
-    # arquivos normalizados cuja fonte original sumiu (foi apagada, renomeada, ou
-    # passou a falhar na extração) não devem continuar servíveis nem aparecer na
-    # listagem — é exatamente o que causava respostas misturando documentos. Só
-    # depois do commit: se a gravação falhar, o índice anterior ainda os referencia.
-    relatorio["removidos"], relatorio["preservados"] = _remover_gerados(docs_normalizado, gerados)
+                total_final = chunks_mantidos + len(novos_chunks)
+                if total_final == 0 and not forcar and chunks_atuais > 0:
+                    raise ErroIngestao(
+                        "a ingestão não gerou nenhum chunk e substituiria um índice que tem conteúdo. "
+                        "Índice e docs-normalizado foram mantidos; use --forcar se a intenção é mesmo esvaziá-lo."
+                    )
+
+                reprocessadas = {r["caminho_origem"] for r in registros}
+                # origens no índice que não foram mantidas nem reprocessadas: fonte apagada,
+                # renomeada ou que passou a falhar na extração
+                relatorio["documentos_removidos"] = sorted(
+                    index.origens_indexadas(conexao) - mantidas - reprocessadas
+                )
+
+                embeddings = None
+                inicio_embeddings = time.perf_counter()
+                if not sem_embeddings:
+                    if novos_chunks:
+                        avisar(f"embeddings: {len(novos_chunks)} chunk(s)")
+                    if embeddar_passagem_fn is not None:
+                        embeddings = [embeddar_passagem_fn(c) for c in novos_chunks]
+                    elif novos_chunks:
+                        embeddings = embed.embeddar_passagens(
+                            novos_chunks,
+                            progresso_fn=(
+                                (lambda feitos, total: avisar(f"embeddings {feitos}/{total}"))
+                                if progresso_fn is not None
+                                else None
+                            ),
+                        )
+                    else:
+                        embeddings = []
+                relatorio["tempos"]["embeddings"] = time.perf_counter() - inicio_embeddings
+
+                inicio_indice = time.perf_counter()
+                avisar("gravando o índice")
+                relatorio["camada_vetorial_removida"] = index.atualizar_indice(
+                    conexao,
+                    novos_chunks,
+                    registros,
+                    relatorio["documentos_removidos"],
+                    embeddings=embeddings,
+                    nome_modelo=nome_modelo,
+                    reconstruir=bool(relatorio["reconstrucao"]),
+                )
+                relatorio["tempos"]["indice"] = time.perf_counter() - inicio_indice
+            finally:
+                conexao.close()
+
+            # o índice já está gravado: agora os .md novos podem substituir os antigos.
+            # Até aqui, uma queda deixaria docs-normalizado intacto.
+            inicio_troca = time.perf_counter()
+            _promover_normalizados(temporaria, docs_normalizado)
+
+            # arquivos normalizados cuja fonte original sumiu (foi apagada, renomeada, ou
+            # passou a falhar na extração) não devem continuar servíveis nem aparecer na
+            # listagem — é exatamente o que causava respostas misturando documentos. Só
+            # depois do commit: se a gravação falhar, o índice anterior ainda os referencia.
+            relatorio["removidos"], relatorio["preservados"] = _remover_gerados(docs_normalizado, gerados)
+            relatorio["tempos"]["troca"] = time.perf_counter() - inicio_troca
+        finally:
+            shutil.rmtree(temporaria, ignore_errors=True)
 
     relatorio["chunks"] = total_final
     relatorio["chunks_novos"] = len(novos_chunks)
     relatorio["tempo"] = time.perf_counter() - inicio
+    avisar(f"ingestão concluída em {relatorio['tempo']:.1f}s")
     return relatorio
 
 
@@ -281,6 +519,17 @@ def formatar_relatorio(relatorio: dict) -> str:
         f"  Suspeitos (texto vazio): {len(relatorio['suspeitos'])}",
         f"  Removidos (órfãos):      {len(relatorio['removidos'])}",
     ]
+    tempos = relatorio.get("tempos") or {}
+    if tempos:
+        linhas.append("")
+        linhas.append("Tempo por etapa:")
+        rotulos = (("extracao", "Extração"), ("embeddings", "Embeddings"), ("indice", "Índice"), ("troca", "Troca"))
+        for chave, rotulo in rotulos:
+            if chave in tempos:
+                linhas.append(f"  {rotulo + ':':<12} {tempos[chave]:.1f}s")
+        if relatorio.get("mais_lento"):
+            caminho, segundos = relatorio["mais_lento"]
+            linhas.append(f"  Arquivo mais lento: {caminho} ({segundos:.1f}s)")
     if relatorio.get("reconstrucao"):
         linhas.append("")
         linhas.append(f"Índice reconstruído do zero: {relatorio['reconstrucao']}.")
@@ -755,22 +1004,27 @@ def _comando_server_mcp(args: argparse.Namespace) -> None:
 def _comando_ingest(args: argparse.Namespace) -> None:
     docs_fonte = Path(args.docs_fonte)
     docs_normalizado = Path(args.docs_normalizado)
+    progresso_fn = None if args.silencioso else (lambda mensagem: print(mensagem, flush=True))
     try:
         # valida antes do --limpar: com a fonte errada, nada pode ser apagado
         validar_docs_fonte(docs_fonte)
-        if args.limpar:
-            limpar_saidas(docs_normalizado, args.indice)
-
         Path(args.indice).parent.mkdir(parents=True, exist_ok=True)
-        docs_normalizado.mkdir(parents=True, exist_ok=True)
 
-        relatorio = executar_ingestao(
-            docs_fonte,
-            docs_normalizado,
-            args.indice,
-            sem_embeddings=args.sem_embeddings,
-            forcar=args.forcar,
-        )
+        # o lock cobre também o --limpar: sem ele, a limpeza apagaria docs-normalizado
+        # debaixo de uma ingestão do watcher já em andamento
+        with travar_ingestao(args.indice):
+            if args.limpar:
+                limpar_saidas(docs_normalizado, args.indice)
+            docs_normalizado.mkdir(parents=True, exist_ok=True)
+
+            relatorio = executar_ingestao(
+                docs_fonte,
+                docs_normalizado,
+                args.indice,
+                sem_embeddings=args.sem_embeddings,
+                forcar=args.forcar,
+                progresso_fn=progresso_fn,
+            )
     except ErroIngestao as erro:
         print(f"Ingestão abortada: {erro}", file=sys.stderr)
         sys.exit(1)
@@ -853,6 +1107,11 @@ def construir_parser() -> argparse.ArgumentParser:
         help="remove os .md gerados pelo docserver e esvazia o índice antes de reingerir",
     )
     p_ingest.add_argument("--sem-embeddings", action="store_true")
+    p_ingest.add_argument(
+        "--silencioso",
+        action="store_true",
+        help="não mostra o progresso por arquivo e por etapa; só o relatório final",
+    )
     p_ingest.add_argument(
         "--forcar",
         action="store_true",

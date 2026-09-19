@@ -6,6 +6,7 @@ build/
 .venv/
 venv/
 docs-normalizado/*
+.docs-normalizado.tmp-*/
 !docs-normalizado/.gitkeep
 data/*
 !data/.gitkeep

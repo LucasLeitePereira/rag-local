@@ -64,18 +64,40 @@ def embeddar_passagem(chunk: dict) -> list[float]:
 # maiores tendem a compensar: ajuste por EMBEDDINGS_TAMANHO_LOTE.
 TAMANHO_LOTE_PADRAO = 1
 
+# De quantos em quantos chunks o progresso é informado. Só tem efeito quando quem
+# chama passa `progresso_fn`: sem ele, os textos vão todos numa chamada só.
+CHUNKS_POR_AVISO = 25
 
-def embeddar_passagens(chunks: list[dict], tamanho_lote: int | None = None) -> list[list[float]]:
+
+def embeddar_passagens(
+    chunks: list[dict], tamanho_lote: int | None = None, progresso_fn=None
+) -> list[list[float]]:
     """Embeddings de vários chunks numa única chamada ao modelo (`encode` com lista),
-    que distribui os textos em lotes de `tamanho_lote`."""
+    que distribui os textos em lotes de `tamanho_lote`.
+
+    Com `progresso_fn`, os textos são enviados em blocos de `CHUNKS_POR_AVISO` e a
+    função é chamada com `(feitos, total)` ao fim de cada bloco — é o que permite à
+    ingestão mostrar `embeddings 400/1351` numa etapa que leva minutos."""
     if not chunks:
         return []
     if tamanho_lote is None:
         tamanho_lote = int(os.environ.get("EMBEDDINGS_TAMANHO_LOTE", TAMANHO_LOTE_PADRAO))
     modelo = obter_modelo()
     textos = [preparar_passagem(texto_para_embeddar(chunk)) for chunk in chunks]
-    vetores = modelo.encode(textos, batch_size=tamanho_lote, normalize_embeddings=True)
-    return [vetor.tolist() for vetor in vetores]
+    if progresso_fn is None:
+        vetores = modelo.encode(textos, batch_size=tamanho_lote, normalize_embeddings=True)
+        return [vetor.tolist() for vetor in vetores]
+
+    total = len(textos)
+    passo = max(tamanho_lote, CHUNKS_POR_AVISO)
+    vetores: list[list[float]] = []
+    for inicio in range(0, total, passo):
+        bloco = modelo.encode(
+            textos[inicio : inicio + passo], batch_size=tamanho_lote, normalize_embeddings=True
+        )
+        vetores.extend(vetor.tolist() for vetor in bloco)
+        progresso_fn(min(inicio + passo, total), total)
+    return vetores
 
 
 def embeddar_consulta(consulta: str) -> list[float]:

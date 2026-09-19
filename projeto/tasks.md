@@ -46,11 +46,11 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-011 | `docker-compose.yml` sem TTY e `DEPLOY.md` atualizado sobre HTTP | Infra | 🔴 Alta | P | Backlog |
 | TASK-052 | Aquecer os modelos sem segurar o handshake MCP | Servidor MCP | 🔴 Alta | P | Concluída |
 | TASK-012 | Eliminar o `UnicodeDecodeError` da verificação do Tesseract | Extração | 🟡 Média | P | Concluída |
-| TASK-013 | Troca atômica do índice e de `docs-normalizado` | Ingestão | 🟡 Média | M | Backlog |
+| TASK-013 | Troca atômica do índice e de `docs-normalizado` | Ingestão | 🟡 Média | M | Concluída |
 | TASK-014 | Servidor abre o índice somente leitura e sem escrita em consultas | Servidor MCP | 🟡 Média | P | Backlog |
 | TASK-015 | Watcher garantido em Linux: modo polling e execução como serviço | Ingestão | 🟡 Média | M | Backlog |
-| TASK-016 | Impedir ingestões simultâneas (watcher + `ingest` manual) | Ingestão | 🟡 Média | P | Backlog |
-| TASK-051 | Progresso por arquivo e por etapa durante a ingestão | Ingestão | 🟡 Média | P | Backlog |
+| TASK-016 | Impedir ingestões simultâneas (watcher + `ingest` manual) | Ingestão | 🟡 Média | P | Concluída |
+| TASK-051 | Progresso por arquivo e por etapa durante a ingestão | Ingestão | 🟡 Média | P | Concluída |
 | TASK-017 | OCR seletivo por página em PDFs escaneados | Extração | 🟡 Média | G | Backlog |
 | TASK-018 | Estrutura de cabeçalhos e artefatos de acentuação em PDFs | Extração | 🟡 Média | M | Backlog |
 | TASK-019 | Detectar a codificação de `.txt`, `.md` e `.csv` | Extração | 🟡 Média | P | Backlog |
@@ -94,7 +94,7 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 1. **Rápidas e de alto impacto:** TASK-002, TASK-003, TASK-004, TASK-011, TASK-012.
 2. **Uso por agentes:** TASK-001, TASK-006.
 3. **Base para mexer na busca:** TASK-007 (sem avaliação ampla, as mudanças de busca são às cegas), depois TASK-008 e TASK-009.
-4. **Operação com o watcher:** TASK-005, TASK-013, TASK-016.
+4. **Operação com o watcher:** TASK-005, TASK-013, TASK-016 (todas feitas). Resta TASK-015 (watcher em Linux), a única de Ingestão ainda aberta.
 
 ---
 
@@ -123,12 +123,13 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Dependências:** TASK-004 (recomendado antes).
 
 ### TASK-013 · Troca atômica do índice e de `docs-normalizado`
-- **Prioridade:** 🟡 Média · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🟡 Média · **Esforço:** M · **Tipo:** melhoria · **Status:** Concluída (2026-09-19)
 - **Origem:** diagnóstico (A4)
 - **Contexto:** a ingestão reescreve `docs-normalizado/` antes de atualizar o índice. Se o processo cair durante os embeddings (a etapa mais longa), disco e índice ficam dessincronizados. Enquanto a ingestão roda, `ler_documento` pode servir texto mais novo que os chunks da `buscar`.
 - **O que fazer:** gerar os `.md` numa pasta temporária e o índice em arquivo temporário (ou transação única), e trocar tudo ao final (`os.replace`).
 - **Critérios de aceite:** matar a ingestão no meio (teste com exceção injetada durante os embeddings) deixa índice e `docs-normalizado` no estado anterior.
 - **Dependências:** avaliar junto com TASK-005, que muda o fluxo de gravação.
+- **Resultado:** os `.md` vão para `.docs-normalizado.tmp-<pid>-<id>/` (pasta irmã) e são movidos com `os.replace` só depois do commit do índice. Verificado com `kill` real durante os embeddings: `.md` e índice idênticos ao estado anterior. Custo da troca: 0,0 s. Decisão [0011](decisoes/0011-troca-atomica-por-pasta-temporaria.md), verificação em [testes/2026-09-19](testes/2026-09-19-ingestao-atomica-e-lock.md).
 
 ### TASK-015 · Watcher garantido em Linux: modo polling e execução como serviço
 - **Prioridade:** 🟡 Média · **Esforço:** M · **Tipo:** melhoria · **Status:** Backlog
@@ -138,18 +139,20 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 - **Critérios de aceite:** com `--polling`, o watcher detecta a criação de um arquivo num volume montado no Docker; documentação atualizada em `INGESTAO.md`, `DEPLOY.md` e `TROUBLESHOOTING.md`.
 
 ### TASK-016 · Impedir ingestões simultâneas (watcher + `ingest` manual)
-- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** bug · **Status:** Backlog
+- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** bug · **Status:** Concluída (2026-09-19)
 - **Origem:** implementação do `docserver watch`
 - **Contexto:** hoje só a documentação pede para não rodar `docserver ingest` com o watcher ativo. Duas ingestões simultâneas reescrevem `docs-normalizado/` e o índice ao mesmo tempo.
 - **O que fazer:** lock de arquivo ao lado do índice (ex.: `data/indice.db.lock`) adquirido por `executar_ingestao`; a segunda ingestão aborta com mensagem clara (ou espera, no caso do watcher).
 - **Critérios de aceite:** teste com duas ingestões concorrentes: uma conclui e a outra recebe `ErroIngestao` explicando o lock; lock órfão (processo morto) não bloqueia para sempre.
+- **Resultado:** `cli.travar_ingestao` trava um byte de `data/indice.db.lock` (`fcntl.flock`/`msvcrt.locking`). `ingest` aborta na hora com o PID do dono; o watcher espera até 5 min. Como o lock é do SO, um `.lock` órfão não bloqueia nada — não há expiração por tempo nem checagem de PID vivo (inviável no Windows). Decisão [0012](decisoes/0012-lock-de-arquivo-para-uma-ingestao-por-vez.md).
 
 ### TASK-051 · Progresso por arquivo e por etapa durante a ingestão
-- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** melhoria · **Status:** Backlog
+- **Prioridade:** 🟡 Média · **Esforço:** P · **Tipo:** melhoria · **Status:** Concluída (2026-09-19)
 - **Origem:** teste do `docserver watch` (2026-09-15)
 - **Contexto:** a ingestão só imprime o relatório no fim. Ao adicionar um PDF de 16 MB, a reingestão passou mais de 18 minutos sem nenhuma saída. Só dava para saber em que etapa ela estava olhando os horários dos `.md` em `docs-normalizado/` e o uso de CPU do processo.
 - **O que fazer:** em `cli.executar_ingestao`, emitir uma linha por arquivo (`[3/11] extraindo pt857tpcr-b022020.pdf (16 MB)… 412 chunks em 95.2s`), uma linha ao iniciar cada etapa (extração, embeddings, gravação do índice) e progresso periódico dos embeddings (`embeddings 400/1351`). A saída vai por um callback injetável (`progresso_fn`), para os testes não poluírem a saída e o watcher prefixar com `docserver:`. O tempo de cada etapa entra no relatório final, o que mostra se o gargalo é a extração ou os embeddings (útil para priorizar TASK-004 e TASK-005). No modo stdio do servidor, nada disso pode ir para o stdout.
 - **Critérios de aceite:** `docserver ingest` e `docserver watch` mostram o arquivo em processamento e o avanço dos embeddings; o relatório final traz o tempo por etapa e o arquivo mais lento; teste verifica as chamadas do callback.
+- **Resultado:** `progresso_fn` em `executar_ingestao` e em `embed.embeddar_passagens`; `ingest` imprime (silenciável com `--silencioso`), o watcher prefixa com `docserver:`, o stdio segue mudo. Medição real num PDF de 266 KB: extração 43,0 s × embeddings 20,1 s — **a extração de PDF é o gargalo**, não os embeddings, o que muda a prioridade de TASK-004 e TASK-017. Decisão [0013](decisoes/0013-progresso-da-ingestao-por-callback.md).
 
 ---
 
@@ -508,3 +511,6 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |
 | TASK-009 | Reranker cross-encoder (mMiniLM por padrão, calibrado pela avaliação) | 2026-09-15 | `d736053`, `a23f5b6` |
 | TASK-052 | Aquecimento em thread no stdio: `initialize` caiu de ~186–259 s para 7,9 s | 2026-09-17 | `bad47d6` |
+| TASK-013 | Troca atômica: `.md` numa pasta temporária, movidos só depois do commit do índice | 2026-09-19 | `_a preencher_` |
+| TASK-016 | Lock de arquivo do SO ao lado do índice: uma ingestão por vez | 2026-09-19 | `_a preencher_` |
+| TASK-051 | Progresso por arquivo, por etapa e dos embeddings, via `progresso_fn` | 2026-09-19 | `_a preencher_` |
