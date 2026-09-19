@@ -1,7 +1,7 @@
 # 0012 · Lock de arquivo do sistema operacional para uma ingestão por vez
 
 - **Data:** 2026-09-19 · **Status:** Aceita
-- **Tarefa:** TASK-016 · **Commit:** `_a preencher_`
+- **Tarefa:** TASK-016 · **Commit:** `77b4a30`
 
 ## Contexto
 Nada impedia que `docserver watch` e `docserver ingest` rodassem ao mesmo

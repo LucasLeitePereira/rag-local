@@ -1,7 +1,7 @@
 # 0011 · `docs-normalizado` trocado por pasta temporária, depois do commit do índice
 
 - **Data:** 2026-09-19 · **Status:** Aceita
-- **Tarefa:** TASK-013 · **Commit:** `_a preencher_`
+- **Tarefa:** TASK-013 · **Commit:** `77b4a30`
 
 ## Contexto
 A ingestão escrevia cada `.md` normalizado direto em `docs-normalizado/`

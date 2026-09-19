@@ -48,8 +48,6 @@ Suíte: 197 → **212 testes**, todos passando. Verificação real registrada em
 
 ## Pendente
 
-- Preencher o hash do commit em `tasks.md` e nas três decisões (estão como
-  `_a preencher_`).
 - **TASK-015** segue aberta: é a única de Ingestão que resta e depende de uma
   máquina Linux / Docker / WSL2 para validar.
 - Próximas de prioridade média sugeridas pelo backlog: TASK-053 (chamadas de

@@ -1,7 +1,7 @@
 # 0013 · Progresso da ingestão por callback injetável, não por `print`
 
 - **Data:** 2026-09-19 · **Status:** Aceita
-- **Tarefa:** TASK-051 · **Commit:** `_a preencher_`
+- **Tarefa:** TASK-051 · **Commit:** `77b4a30`
 
 ## Contexto
 A ingestão só falava no fim. Ao adicionar um PDF de 16 MB ao corpus real, a

@@ -511,6 +511,6 @@ somada aos ajustes encontrados ao testar o `docserver watch`.
 | TASK-001 | `ler_documento` em partes e por seção + tool `ler_trecho` | 2026-09-15 | `a8ffaac` |
 | TASK-009 | Reranker cross-encoder (mMiniLM por padrão, calibrado pela avaliação) | 2026-09-15 | `d736053`, `a23f5b6` |
 | TASK-052 | Aquecimento em thread no stdio: `initialize` caiu de ~186–259 s para 7,9 s | 2026-09-17 | `bad47d6` |
-| TASK-013 | Troca atômica: `.md` numa pasta temporária, movidos só depois do commit do índice | 2026-09-19 | `_a preencher_` |
-| TASK-016 | Lock de arquivo do SO ao lado do índice: uma ingestão por vez | 2026-09-19 | `_a preencher_` |
-| TASK-051 | Progresso por arquivo, por etapa e dos embeddings, via `progresso_fn` | 2026-09-19 | `_a preencher_` |
+| TASK-013 | Troca atômica: `.md` numa pasta temporária, movidos só depois do commit do índice | 2026-09-19 | `77b4a30` |
+| TASK-016 | Lock de arquivo do SO ao lado do índice: uma ingestão por vez | 2026-09-19 | `77b4a30` |
+| TASK-051 | Progresso por arquivo, por etapa e dos embeddings, via `progresso_fn` | 2026-09-19 | `77b4a30` |
